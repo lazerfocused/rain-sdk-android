@@ -17,7 +17,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        minSdk = 26
+        minSdk = 28
         targetSdk = 36
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -39,12 +39,33 @@ android {
     }
 }
 
+// Turnkey (com.turnkey:crypto, com.turnkey:encoding) depends on Bouncy Castle's
+// `bcprov-jdk15to18:1.82`. Web3j 4.10 depends on the parallel `bcprov-jdk18on:1.73` build.
+// Both artifacts ship the same `org.bouncycastle.*` class names, so dex-ing them together
+// fails with "Duplicate class" errors. Force the whole project onto a single BC artifact
+// (Turnkey's, since Turnkey was compiled against it) by excluding the duplicate.
+//
+// The targeted exclusion below (on the web3j dependency) is also published into Gradle
+// Module Metadata so downstream Gradle consumers inherit it automatically. The
+// configurations-wide exclusion is belt-and-suspenders for direct module builds and
+// non-Gradle consumers — see docs/TURNKEY_SUPPORT.md for the Maven-POM workaround.
+configurations.all {
+    exclude(group = "org.bouncycastle", module = "bcprov-jdk18on")
+}
+
 dependencies {
     // Portal SDK (Use api to expose Portal classes to consumers)
     api(libs.portal.android)
 
-    // Web3j for ABI Encoding
-    implementation(libs.web3j.core)
+    // Turnkey SDK (Use api to expose TurnkeyContext / types to consumers)
+    api(libs.turnkey.sdk.kotlin)
+    api(libs.turnkey.http)
+    api(libs.turnkey.types)
+
+    // Web3j for ABI Encoding. See note above about Bouncy Castle conflict.
+    implementation(libs.web3j.core) {
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk18on")
+    }
 
     // JSON Serialization
     implementation(libs.kotlinx.serialization.json)

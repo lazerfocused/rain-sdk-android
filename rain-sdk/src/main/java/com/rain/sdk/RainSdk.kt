@@ -7,6 +7,7 @@ import com.rain.sdk.internal.config.RainConfig
 import com.rain.sdk.internal.core.RainSdkManager
 import com.rain.sdk.internal.core.RainTransactionBuilderImpl
 import com.rain.sdk.internal.error.RainError
+import com.turnkey.core.TurnkeyContext
 import io.portalhq.android.Portal
 
 /**
@@ -55,11 +56,18 @@ class RainSdk private constructor(
     
     /**
      * Convenience property for Portal access.
-     * 
+     *
      * @throws RainError.SdkNotInitialized if Portal hasn't been initialized
      */
     val portal: Portal get() = sdkManager.portal
-    
+
+    /**
+     * Convenience property for Turnkey context access.
+     *
+     * @throws RainError.SdkNotInitialized if Turnkey hasn't been initialized
+     */
+    val turnkey: TurnkeyContext get() = sdkManager.turnkey
+
     /**
      * Checks if the SDK has been initialized.
      */

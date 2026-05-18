@@ -1,9 +1,10 @@
 # Rain SDK for Android
 
-Android SDK that integrates [Portal](https://portalhq.io) MPC wallet with Rain collateral withdrawal: build EIP-712 messages, compose withdrawal transactions, sign and submit via Portal, and estimate fees.
+Android SDK that integrates [Portal](https://portalhq.io) MPC wallet or [Turnkey](https://turnkey.com) with Rain collateral withdrawal: build EIP-712 messages, compose withdrawal transactions, sign and submit via the active wallet provider, and estimate fees.
 
 - **Portal wallet integration** — Initialize with a Portal session token and RPC endpoints; use the connected MPC wallet for signing and sending transactions.
-- **Wallet-agnostic mode** — Initialize with RPC endpoints only (no Portal) to use transaction-building APIs (EIP-712 message, withdraw calldata) with your own wallet or backend.
+- **Turnkey wallet integration** — Initialize with an authenticated `TurnkeyContext` (passkeys / auth proxy / OAuth / OTP handled outside Rain by the Turnkey Kotlin SDK). See [docs/TURNKEY_SUPPORT.md](docs/TURNKEY_SUPPORT.md).
+- **Wallet-agnostic mode** — Initialize with RPC endpoints only (no wallet provider) to use transaction-building APIs (EIP-712 message, withdraw calldata) with your own wallet or backend.
 - **EIP-712 message building** — Build typed data for admin signature required by the collateral contract.
 - **Withdrawal transaction building** — Build ABI-encoded withdraw calldata for submission.
 - **Full withdrawal flow** — Builds the transaction, signs via Portal, and submits; returns the transaction hash.
@@ -25,7 +26,7 @@ dependencies {
 
 ## Requirements
 
-- Android SDK 26+
+- Android SDK 28+ (Turnkey-compatible)
 - Kotlin 1.8+
 
 ## Quick Start
@@ -51,7 +52,36 @@ client.initializePortal(
 val portal = RainSdk.getInstance().portal
 ```
 
-### 2. Initialize without Portal (wallet-agnostic)
+### 2. Initialize with Turnkey (full wallet flow)
+
+Use this when you authenticate users with Turnkey (passkeys / auth proxy / OAuth / OTP) and want Rain to sign + send through that session.
+
+Turnkey authentication happens **outside Rain SDK** — the host app drives Turnkey's Kotlin SDK (OTP, passkey, OAuth) and hands the authenticated `TurnkeyContext` to Rain.
+
+```kotlin
+import com.rain.sdk.RainSdk
+import com.turnkey.core.TurnkeyContext
+
+// Turnkey is initialized in your Application.onCreate() and the user has authenticated
+// (TurnkeyContext.session.value is non-null).
+
+val client = RainSdk.getInstance().client
+
+client.initializeTurnkey(
+    turnkey = TurnkeyContext,
+    rpcEndpoints = mapOf(
+        43114 to "https://avalanche-c-chain-rpc.publicnode.com",
+        43113 to "https://avalanche-fuji-c-chain-rpc.publicnode.com"
+    ),
+    walletAddress = null // omit to use the first Ethereum account from TurnkeyContext.wallets
+)
+```
+
+**Reference auth glue:** [`app/src/main/java/com/rain/sdk/sample/TurnkeyAuthSample.kt`](app/src/main/java/com/rain/sdk/sample/TurnkeyAuthSample.kt) shows the full email-OTP flow (init, send OTP, verify, ensure wallet) you'd write in your own app. Copy/adapt that file.
+
+See [docs/TURNKEY_SUPPORT.md](docs/TURNKEY_SUPPORT.md) for the full Turnkey integration guide.
+
+### 3. Initialize without a wallet provider (wallet-agnostic)
 
 Use this when you only need transaction building (EIP-712 message, calldata) and will sign/submit elsewhere.
 
@@ -60,8 +90,8 @@ import com.rain.sdk.RainSdk
 
 val txBuilder = RainSdk.getInstance().transactionBuilder
 
-// buildEIP712Message, buildWithdrawTransactionData
-// are available; withdrawCollateral with autoSend requires Portal.
+// buildEIP712Message, buildWithdrawTransactionData are available;
+// withdrawCollateral with autoSend requires a wallet provider (Portal or Turnkey).
 ```
 
 ### 3. Get Wallet Address

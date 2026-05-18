@@ -15,6 +15,8 @@ enum class RainErrorCode(val code: String) {
   USER_REJECTED("RAIN_401"),
   INSUFFICIENT_FUNDS("RAIN_402"),
   TRANSACTION_SIMULATION_FAILED("RAIN_403"),
+  WALLET_UNAVAILABLE("RAIN_404"),
+  WITHDRAWAL_REVERTED_BY_NETWORK("RAIN_405"),
 
   PROVIDER_ERROR("RAIN_501"),
   INTERNAL_LOGIC_ERROR("RAIN_502")
@@ -53,6 +55,20 @@ sealed class RainError(
 
   class TransactionSimulationFailed(cause: Throwable?) :
     RainError(RainErrorCode.TRANSACTION_SIMULATION_FAILED, "Transaction simulation failed: ${cause?.message}", cause)
+
+  /**
+   * The active wallet provider returned no usable wallet address — e.g. the user has not
+   * created or connected a wallet, or the Turnkey context contains no Ethereum account.
+   */
+  class WalletUnavailable(details: String = "No wallet address from the wallet provider") :
+    RainError(RainErrorCode.WALLET_UNAVAILABLE, details)
+
+  /**
+   * Withdrawal transaction reverted on-chain (e.g. duplicate withdrawal in a short window,
+   * already-used signature, contract guard tripped).
+   */
+  class WithdrawalRevertedByNetwork(details: String = "Withdrawal reverted by the network", cause: Throwable? = null) :
+    RainError(RainErrorCode.WITHDRAWAL_REVERTED_BY_NETWORK, details, cause)
 
   // --- 5xx Internal ---
   class ProviderError(cause: Throwable?) :
