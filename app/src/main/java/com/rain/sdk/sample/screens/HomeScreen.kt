@@ -1,5 +1,6 @@
 package com.rain.sdk.sample.screens
 
+import android.app.Application
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,13 +12,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -27,6 +28,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -58,6 +60,7 @@ fun HomeScreen(
     viewModel: HomeViewModel = viewModel(factory = HomeViewModelFactory(rainClient))
 ) {
     val state by viewModel.state.collectAsState()
+    val application = LocalContext.current.applicationContext as Application
 
     Column(
         modifier = Modifier
@@ -67,29 +70,46 @@ fun HomeScreen(
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Title
         Text(
             text = "Rain SDK Showcase",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 24.dp)
+            modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // --- Configuration Section ---
-        ConfigurationSection(
-            state = state,
-            onSessionTokenChanged = viewModel::onSessionTokenChanged,
-            onAccessTokenChanged = { value ->
-                viewModel.onAccessTokenChanged(value)
-                onAccessTokenChanged(value)
-            },
-            onInitializeSdk = viewModel::initializeSdk
+        ModeSelector(
+            mode = state.mode,
+            enabled = !state.isInitialized,
+            onModeChanged = viewModel::onModeChanged
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // --- Recovery Section (Conditional) ---
-        if (state.needsRecovery) {
+        when (state.mode) {
+            WalletMode.Portal -> ConfigurationSection(
+                state = state,
+                onSessionTokenChanged = viewModel::onSessionTokenChanged,
+                onAccessTokenChanged = { value ->
+                    viewModel.onAccessTokenChanged(value)
+                    onAccessTokenChanged(value)
+                },
+                onInitializeSdk = viewModel::initializeSdk
+            )
+            WalletMode.Turnkey -> TurnkeySection(
+                state = state,
+                onOrgIdChanged = viewModel::onTurnkeyOrgIdChanged,
+                onAuthProxyConfigIdChanged = viewModel::onTurnkeyAuthProxyConfigIdChanged,
+                onEmailChanged = viewModel::onTurnkeyEmailChanged,
+                onOtpCodeChanged = viewModel::onTurnkeyOtpCodeChanged,
+                onSendOtp = { viewModel.sendTurnkeyOtp(application) },
+                onVerifyOtp = viewModel::verifyTurnkeyOtp,
+                onInitializeRain = viewModel::initializeRainWithTurnkey
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (state.needsRecovery && state.mode == WalletMode.Portal) {
             RecoverySection(
                 state = state,
                 onPinChanged = viewModel::onPinChanged,
@@ -98,7 +118,6 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // --- Feature Grid ---
         if (state.isRecovered) {
             Text(
                 text = "SDK Features",
@@ -117,7 +136,6 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // --- Clear Session ---
         if (state.isRecovered) {
             Button(
                 onClick = { viewModel.clearSession() },
@@ -132,7 +150,6 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // --- Status ---
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surfaceVariant,
@@ -144,6 +161,33 @@ fun HomeScreen(
                 modifier = Modifier.padding(16.dp)
             )
         }
+    }
+}
+
+@Composable
+private fun ModeSelector(
+    mode: WalletMode,
+    enabled: Boolean,
+    onModeChanged: (WalletMode) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChip(
+            selected = mode == WalletMode.Portal,
+            onClick = { if (enabled) onModeChanged(WalletMode.Portal) },
+            label = { Text("Portal MPC") },
+            enabled = enabled,
+            modifier = Modifier.weight(1f)
+        )
+        FilterChip(
+            selected = mode == WalletMode.Turnkey,
+            onClick = { if (enabled) onModeChanged(WalletMode.Turnkey) },
+            label = { Text("Turnkey") },
+            enabled = enabled,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
@@ -162,7 +206,7 @@ private fun ConfigurationSection(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "Configuration",
+                text = "Portal Configuration",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 12.dp)
@@ -196,6 +240,119 @@ private fun ConfigurationSection(
                 Text(
                     text = if (state.isInitialized) "✅ SDK Initialized" else "Initialize SDK"
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TurnkeySection(
+    state: HomeUiState,
+    onOrgIdChanged: (String) -> Unit,
+    onAuthProxyConfigIdChanged: (String) -> Unit,
+    onEmailChanged: (String) -> Unit,
+    onOtpCodeChanged: (String) -> Unit,
+    onSendOtp: () -> Unit,
+    onVerifyOtp: () -> Unit,
+    onInitializeRain: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Turnkey Configuration (Email OTP)",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            OutlinedTextField(
+                value = state.turnkeyOrgId,
+                onValueChange = onOrgIdChanged,
+                label = { Text("Parent Organization ID") },
+                enabled = state.turnkeyOtpId == null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                singleLine = true
+            )
+
+            OutlinedTextField(
+                value = state.turnkeyAuthProxyConfigId,
+                onValueChange = onAuthProxyConfigIdChanged,
+                label = { Text("Auth Proxy Config ID") },
+                enabled = state.turnkeyOtpId == null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                singleLine = true
+            )
+
+            OutlinedTextField(
+                value = state.turnkeyEmail,
+                onValueChange = onEmailChanged,
+                label = { Text("Email") },
+                enabled = state.turnkeyOtpId == null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                singleLine = true
+            )
+
+            Button(
+                onClick = onSendOtp,
+                enabled = state.turnkeyOrgId.isNotBlank() &&
+                    state.turnkeyAuthProxyConfigId.isNotBlank() &&
+                    state.turnkeyEmail.isNotBlank() &&
+                    !state.isLoading &&
+                    state.turnkeyOtpId == null,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (state.turnkeyOtpId != null) "OTP sent" else "Init Turnkey & Send OTP")
+            }
+
+            if (state.turnkeyOtpId != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = state.turnkeyOtpCode,
+                    onValueChange = onOtpCodeChanged,
+                    label = { Text("OTP Code") },
+                    enabled = !state.turnkeySessionActive,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    singleLine = true
+                )
+
+                Button(
+                    onClick = onVerifyOtp,
+                    enabled = state.turnkeyOtpCode.isNotBlank() &&
+                        !state.isLoading &&
+                        !state.turnkeySessionActive,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (state.turnkeySessionActive) "✅ Session active" else "Verify & Log In"
+                    )
+                }
+            }
+
+            if (state.turnkeySessionActive) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = onInitializeRain,
+                    enabled = !state.isLoading && !state.isInitialized,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (state.isInitialized) "✅ Rain Initialized" else "Initialize Rain w/ Turnkey"
+                    )
+                }
             }
         }
     }
@@ -252,7 +409,6 @@ private fun FeatureGrid(
     actions: List<FeatureAction>,
     onActionClick: (Screen) -> Unit
 ) {
-    // Using Column with Rows instead of LazyVerticalGrid to avoid nested scroll issues
     val chunked = actions.chunked(2)
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -292,7 +448,6 @@ private fun FeatureGrid(
                         }
                     }
                 }
-                // Fill remaining space if odd number
                 if (row.size < 2) {
                     Spacer(modifier = Modifier.weight(1f))
                 }

@@ -6,7 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.rain.sdk.interfaces.RainClient
 import com.rain.sdk.sample.NetworkClient
-import io.portalhq.android.storage.mobile.PortalNamespace
+import com.rain.sdk.sample.SampleLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,37 +21,40 @@ class WalletInfoViewModel(
     val state: StateFlow<WalletInfoUiState> = _state.asStateFlow()
 
     fun fetchWalletInfo(accessToken: String) {
+        SampleLog.i("WalletInfo", "fetching wallet info")
         _state.update { it.copy(isLoading = true, errorText = null) }
 
         viewModelScope.launch {
             try {
-                // 1. Fetch Portal Address (user's wallet)
-                val portalAddress = rainClient.portal.getAddress(PortalNamespace.EIP155)
-                    ?: throw Exception("Portal address not found")
-                val portalQr = rainClient.generateAddressQRCode(portalAddress)
+                val walletAddress = rainClient.getAddress()
+                SampleLog.d("WalletInfo", "wallet address=$walletAddress")
+                val walletQr = rainClient.generateAddressQRCode(walletAddress)
 
                 _state.update {
                     it.copy(
-                        portalAddress = portalAddress,
-                        portalQrBitmap = portalQr
+                        portalAddress = walletAddress,
+                        portalQrBitmap = walletQr
                     )
                 }
 
-                // 2. Fetch Collateral Contract (deposit address)
                 val contractResponse = NetworkClient.fetchCollateralContract(accessToken)
                 if (contractResponse.result.isFailure) {
+                    val err = contractResponse.result.exceptionOrNull()
+                    SampleLog.e("WalletInfo", "fetchCollateralContract failed: ${err?.message}", err)
                     _state.update {
                         it.copy(
                             isLoading = false,
-                            errorText = "Failed to fetch collateral: ${contractResponse.result.exceptionOrNull()?.message}"
+                            errorText = "Failed to fetch collateral: ${err?.message}"
                         )
                     }
                     return@launch
                 }
 
                 val contract = contractResponse.result.getOrThrow()
+                SampleLog.d("WalletInfo", "collateral address=${contract.address}")
                 val collateralQr = rainClient.generateAddressQRCode(contract.address)
 
+                SampleLog.i("WalletInfo", "success")
                 _state.update {
                     it.copy(
                         collateralAddress = contract.address,
@@ -60,6 +63,7 @@ class WalletInfoViewModel(
                     )
                 }
             } catch (e: Exception) {
+                SampleLog.e("WalletInfo", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
                         isLoading = false,

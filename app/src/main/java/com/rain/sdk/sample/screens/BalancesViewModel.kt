@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.rain.sdk.RainChain
 import com.rain.sdk.interfaces.RainClient
 import com.rain.sdk.sample.NetworkClient
+import com.rain.sdk.sample.SampleLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,15 +34,18 @@ class BalancesViewModel(
 
     fun fetchBalances() {
         if (!rainClient.isInitialized) {
+            SampleLog.w("Balances.fetch", "SDK not initialized")
             _state.update { it.copy(errorMessage = "SDK not initialized") }
             return
         }
 
+        SampleLog.i("Balances.fetch", "fetching balances")
         _state.update { it.copy(isLoading = true, errorMessage = null) }
 
         viewModelScope.launch {
             try {
                 val native = rainClient.getNativeBalance(RainChain.AVALANCHE_TESTNET)
+                SampleLog.d("Balances.fetch", "native=$native AVAX")
                 val currentState = _state.value
 
                 var erc20: String? = null
@@ -52,9 +56,14 @@ class BalancesViewModel(
                         tokenAddress = currentState.tokenContractAddress,
                         decimals = decimals
                     )
+                    SampleLog.d(
+                        "Balances.fetch",
+                        "erc20 token=${currentState.tokenContractAddress} balance=$erc20Balance"
+                    )
                     erc20 = "$erc20Balance"
                 }
 
+                SampleLog.i("Balances.fetch", "success")
                 _state.update {
                     it.copy(
                         nativeBalance = "$native AVAX",
@@ -63,6 +72,7 @@ class BalancesViewModel(
                     )
                 }
             } catch (e: Exception) {
+                SampleLog.e("Balances.fetch", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
                         errorMessage = e.message ?: "Unknown error",
@@ -75,25 +85,30 @@ class BalancesViewModel(
 
     fun fetchCollateralBalances() {
         if (!rainClient.isInitialized) {
+            SampleLog.w("Balances.collateral", "SDK not initialized")
             _state.update { it.copy(collateralError = "SDK not initialized") }
             return
         }
         val accessToken = _state.value.accessToken
         if (accessToken.isBlank()) {
+            SampleLog.w("Balances.collateral", "access token blank")
             _state.update { it.copy(collateralError = "Access token not available") }
             return
         }
 
+        SampleLog.i("Balances.collateral", "fetching collateral contract")
         _state.update { it.copy(isCollateralLoading = true, collateralError = null) }
 
         viewModelScope.launch {
             try {
                 val contractResponse = NetworkClient.fetchCollateralContract(accessToken)
                 if (contractResponse.result.isFailure) {
+                    val err = contractResponse.result.exceptionOrNull()
+                    SampleLog.e("Balances.collateral", "fetchCollateralContract failed: ${err?.message}", err)
                     _state.update {
                         it.copy(
                             isCollateralLoading = false,
-                            collateralError = "Failed to fetch contract: ${contractResponse.result.exceptionOrNull()?.message}"
+                            collateralError = "Failed to fetch contract: ${err?.message}"
                         )
                     }
                     return@launch
@@ -101,8 +116,12 @@ class BalancesViewModel(
 
                 val contract = contractResponse.result.getOrThrow()
                 val tokens = contract.tokens
-                
+
                 val collateralAddress = contract.address
+                SampleLog.i(
+                    "Balances.collateral",
+                    "success — address=$collateralAddress tokens=${tokens.size}"
+                )
 
                 // Collateral balances come from the API, not on-chain.
                 // Tokens are deposited into the smart contract, so the user's
@@ -126,6 +145,7 @@ class BalancesViewModel(
                     )
                 }
             } catch (e: Exception) {
+                SampleLog.e("Balances.collateral", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
                         collateralError = e.message ?: "Unknown error",
@@ -135,15 +155,16 @@ class BalancesViewModel(
             }
         }
     }
-    
+
     fun loadWalletAddresses() {
         if (rainClient.isInitialized) {
             viewModelScope.launch {
                 try {
                     val address = rainClient.getAddress()
+                    SampleLog.d("Balances.address", "wallet address=$address")
                     _state.update { it.copy(internalWalletAddress = address) }
-                } catch (_: Exception) {
-                    // Ignore if not initialized properly
+                } catch (e: Exception) {
+                    SampleLog.w("Balances.address", "getAddress failed: ${e.message}", e)
                 }
             }
         }

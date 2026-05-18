@@ -7,6 +7,7 @@ import com.rain.sdk.RainChain
 import com.rain.sdk.interfaces.RainClient
 import com.rain.sdk.models.RainTransaction
 import com.rain.sdk.models.RainTransactionOrder
+import com.rain.sdk.sample.SampleLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,14 +22,15 @@ class TransactionHistoryViewModel(
   val state: StateFlow<TransactionHistoryUiState> = _state.asStateFlow()
 
   fun fetchTransactions() {
+    SampleLog.i("History.fetch", "fetching transactions limit=20 order=DESC")
     _state.update { it.copy(isLoading = true, errorText = null) }
 
     viewModelScope.launch {
       try {
-        // Fetch wallet address to determine send/receive direction
         val address = try {
           rainClient.getAddress()
         } catch (e: Exception) {
+          SampleLog.w("History.fetch", "getAddress failed (continuing): ${e.message}", e)
           null
         }
 
@@ -37,6 +39,7 @@ class TransactionHistoryViewModel(
           limit = 20,
           order = RainTransactionOrder.DESC
         )
+        SampleLog.i("History.fetch", "success — count=${result.transactions.size}")
         _state.update {
           it.copy(
             transactions = result.transactions,
@@ -45,6 +48,7 @@ class TransactionHistoryViewModel(
           )
         }
       } catch (e: Exception) {
+        SampleLog.e("History.fetch", "failed: ${e.message}", e)
         _state.update {
           it.copy(
             isLoading = false,
