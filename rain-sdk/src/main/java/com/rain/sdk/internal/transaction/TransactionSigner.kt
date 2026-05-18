@@ -1,23 +1,25 @@
 package com.rain.sdk.internal.transaction
 
 import com.rain.sdk.internal.error.ErrorMapper
-import com.rain.sdk.internal.core.PortalManager
-import kotlinx.coroutines.CancellationException
 import com.rain.sdk.internal.error.RainError
+import com.rain.sdk.internal.provider.WalletProvider
+import kotlinx.coroutines.CancellationException
 
 /**
  * Handles transaction signing operations.
- * 
- * Wraps Portal signing calls and maps signing errors to appropriate RainError types.
+ *
+ * Delegates signing to the active [WalletProvider] (Portal or Turnkey) so the same
+ * withdraw flow works regardless of which wallet provider is registered.
+ * Maps signing errors to appropriate [RainError] types.
  */
 internal class TransactionSigner(
-    private val portalManager: PortalManager,
+    private val walletProvider: () -> WalletProvider?,
     private val errorMapper: ErrorMapper
 ) {
-    
+
     /**
      * Signs EIP-712 typed data.
-     * 
+     *
      * @param chainId The chain ID
      * @param walletAddress The wallet address to sign with
      * @param typedDataJson The EIP-712 typed data as JSON string
@@ -29,10 +31,12 @@ internal class TransactionSigner(
         walletAddress: String,
         typedDataJson: String
     ): String {
+        val provider = walletProvider() ?: throw RainError.SdkNotInitialized()
         return try {
-            portalManager.signTypedData(chainId, walletAddress, typedDataJson)
+            provider.signTypedData(chainId, walletAddress, typedDataJson)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
+            if (e is RainError) throw e
             throw errorMapper.mapSigningError(e)
         }
     }

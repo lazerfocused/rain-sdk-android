@@ -22,6 +22,7 @@ val portal = sdk.portal                  // Portal instance (after initializatio
 | `client` | `RainClient` | Access to all wallet operations. |
 | `transactionBuilder` | `RainTransactionBuilder` | Transaction builder for wallet-agnostic mode. Throws `RainError.SdkNotInitialized` if not initialized. |
 | `portal` | `Portal` | Convenience access to the Portal instance. Throws `RainError.SdkNotInitialized` if not initialized. |
+| `turnkey` | `TurnkeyContext` | Convenience access to the Turnkey context. Throws `RainError.SdkNotInitialized` if not initialized via `initializeTurnkey`. |
 | `isInitialized` | `Boolean` | Whether the SDK has been successfully initialized. |
 
 ---
@@ -40,6 +41,25 @@ Initializes the SDK with a Portal session token and chain-specific RPC endpoints
 | `portalSessionToken` | `String` | Valid Portal session token. Defaults to `""`. |
 | `rpcEndpoints` | `Map<Int, String>` | Map of numeric chain IDs to RPC URLs. Example: `mapOf(43114 to "https://avalanche-rpc.com")`. |
 | `chainId` | `Int?` | Optional default chain ID. If not provided, SDK selects from `rpcEndpoints`. |
+
+---
+
+### initializeTurnkey(turnkey, rpcEndpoints, chainId, walletAddress)
+
+Initializes the SDK with an authenticated [Turnkey](https://turnkey.com) context and chain-specific RPC endpoints. Use for full wallet flow (sign + send via Turnkey). Turnkey authentication (passkeys / auth proxy / OAuth / OTP) happens **outside** Rain — initialize the Turnkey singleton in your `Application.onCreate()` and pass it here. See [TURNKEY_SUPPORT.md](TURNKEY_SUPPORT.md) for a full walkthrough.
+
+- **Returns:** (none, suspend)
+- **Throws:** `RainError` if initialization fails (e.g. invalid RPC URLs, no usable Ethereum wallet).
+- **Suspend:** Yes (Rain probes the Turnkey wallet list during init).
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `turnkey` | `TurnkeyContext` | Authenticated `TurnkeyContext` singleton from the Turnkey Kotlin SDK. |
+| `rpcEndpoints` | `Map<Int, String>` | Map of numeric chain IDs to RPC URLs. |
+| `chainId` | `Int?` | Optional default chain ID. If not provided, SDK selects from `rpcEndpoints`. |
+| `walletAddress` | `String?` | Optional explicit EVM address override. When `null`, Rain uses the first Ethereum account from `TurnkeyContext.wallets`. |
+
+`initializeTurnkey` and `initializePortal` are mutually exclusive — calling one swaps the active wallet provider and clears the other.
 
 ---
 
@@ -298,7 +318,10 @@ Format: `"RainSDK Error [CODE]: message"`
 | `RAIN_301` | `RainError.NetworkError` | Network/connectivity failure. |
 | `RAIN_401` | `RainError.UserRejected` | User cancelled the signing request in the wallet. |
 | `RAIN_402` | `RainError.InsufficientFunds` | Balance too low for the requested amount or gas. |
-| `RAIN_501` | `RainError.ProviderError` | Portal or provider error. |
+| `RAIN_403` | `RainError.TransactionSimulationFailed` | Preflight `eth_call` simulation failed (e.g. contract revert, insufficient funds). |
+| `RAIN_404` | `RainError.WalletUnavailable` | The active wallet provider returned no usable wallet address (e.g. Turnkey context has no Ethereum account). |
+| `RAIN_405` | `RainError.WithdrawalRevertedByNetwork` | Withdrawal reverted on-chain (e.g. duplicate withdrawal, already-used signature). |
+| `RAIN_501` | `RainError.ProviderError` | Portal, Turnkey, or other provider error. |
 | `RAIN_502` | `RainError.InternalError` | EIP-712 encoding, ABI encoding, or internal processing error. |
 
 ### Error handling example

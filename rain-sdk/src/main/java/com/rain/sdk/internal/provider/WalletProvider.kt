@@ -69,4 +69,55 @@ internal interface WalletProvider {
         offset: Int? = null,
         order: RainTransactionOrder? = null
     ): RainTransactionResult
+
+    /**
+     * Signs EIP-712 typed data with the provider's wallet.
+     *
+     * @param chainId The chain ID
+     * @param walletAddress The wallet address to sign with
+     * @param typedDataJson The EIP-712 typed data as JSON string
+     * @return The signature as a hex string (0x-prefixed)
+     */
+    suspend fun signTypedData(
+        chainId: Int,
+        walletAddress: String,
+        typedDataJson: String
+    ): String
+
+    /**
+     * Sends a low-level transaction with the provider's wallet.
+     * Used by flows like withdraw-collateral that prepare their own calldata.
+     *
+     * @param chainId The chain ID
+     * @param from The sender address
+     * @param to The target contract address
+     * @param data Hex-encoded calldata (or "0x" / empty for plain transfers)
+     * @param value Hex-encoded wei value (e.g. "0x0")
+     * @return The transaction hash
+     */
+    suspend fun sendTransaction(
+        chainId: Int,
+        from: String,
+        to: String,
+        data: String,
+        value: String
+    ): String
+
+    /**
+     * Estimates the total fee (in the chain's native token, e.g. ETH) for a transaction.
+     *
+     * @param chainId The chain ID
+     * @param from The sender address
+     * @param to The target contract address
+     * @param data Hex-encoded calldata (or "0x" / empty for plain transfers)
+     * @param value Hex-encoded wei value (e.g. "0x0")
+     * @return Estimated fee in the chain's native token
+     */
+    suspend fun estimateTransactionFee(
+        chainId: Int,
+        from: String,
+        to: String,
+        data: String,
+        value: String
+    ): Double
 }

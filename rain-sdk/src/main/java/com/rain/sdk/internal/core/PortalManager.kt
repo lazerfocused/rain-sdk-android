@@ -103,10 +103,14 @@ internal class PortalManager {
     val portal = getPortalInstance()
 
     return try {
-      portal.getAddress(PortalNamespace.EIP155)
-        ?: throw RainError.ProviderError(IllegalStateException("Portal returned null address"))
+      val address = portal.getAddress(PortalNamespace.EIP155)
+      if (address.isNullOrEmpty()) {
+        throw RainError.WalletUnavailable("Portal returned no EIP-155 wallet address")
+      }
+      address
     } catch (e: Exception) {
       if (e is CancellationException) throw e
+      if (e is RainError) throw e
       throw RainError.ProviderError(e)
     }
   }
@@ -307,6 +311,52 @@ internal class PortalManager {
       Timber.e(e, "Rain SDK: Failed to sign typed data")
       throw e
     }
+  }
+
+  /**
+   * Estimates the total fee (gas limit * gas price) for a transaction, in the chain's native token.
+   *
+   * @param chainId The chain ID
+   * @param from The sender address
+   * @param to The target contract address
+   * @param data Hex-encoded calldata (or "0x" / empty for plain transfers)
+   * @param value Hex-encoded wei value
+   * @return Estimated fee in the chain's native token (e.g. ETH/AVAX)
+   */
+  suspend fun estimateTransactionFee(
+    chainId: Int,
+    from: String,
+    to: String,
+    data: String,
+    value: String = "0x0"
+  ): Double {
+    val portal = getPortalInstance()
+    val eip155ChainId = "${PortalNamespace.EIP155.value}:$chainId"
+
+    val ethParams = io.portalhq.android.provider.data.EthTransactionParam(
+      from = from,
+      to = to,
+      gas = null,
+      gasPrice = null,
+      maxFeePerGas = null,
+      maxPriorityFeePerGas = null,
+      data = data,
+      value = value,
+      nonce = null
+    )
+
+    val (gasHex, gasPriceHex) = coroutineScope {
+      val gasLimitDeferred = async { portal.ethEstimateGas(eip155ChainId, ethParams) }
+      val gasPriceDeferred = async { portal.ethGasPrice(eip155ChainId) }
+
+      val gasHex = EthereumConverter.convertPortalResultToHexString(gasLimitDeferred.await())
+      val gasPriceHex = EthereumConverter.convertPortalResultToHexString(gasPriceDeferred.await())
+      Pair(gasHex, gasPriceHex)
+    }
+
+    val gasLimit = java.math.BigInteger(gasHex.removePrefix("0x"), 16)
+    val gasPrice = java.math.BigInteger(gasPriceHex.removePrefix("0x"), 16)
+    return EthereumConverter.convertWeiToEth(gasLimit.multiply(gasPrice))
   }
 
   /**

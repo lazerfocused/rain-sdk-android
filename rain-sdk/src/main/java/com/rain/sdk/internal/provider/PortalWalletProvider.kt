@@ -90,4 +90,32 @@ internal class PortalWalletProvider(
   ): RainTransactionResult {
     return portalManager.getTransactions(chainId, limit, offset, order)
   }
+
+  override suspend fun signTypedData(
+    chainId: Int,
+    walletAddress: String,
+    typedDataJson: String
+  ): String {
+    return portalManager.signTypedData(chainId, walletAddress, typedDataJson)
+  }
+
+  override suspend fun sendTransaction(
+    chainId: Int,
+    from: String,
+    to: String,
+    data: String,
+    value: String
+  ): String {
+    return portalManager.sendTransaction(chainId, from, to, data, value)
+  }
+
+  override suspend fun estimateTransactionFee(
+    chainId: Int,
+    from: String,
+    to: String,
+    data: String,
+    value: String
+  ): Double {
+    return portalManager.estimateTransactionFee(chainId, from, to, data, value)
+  }
 }

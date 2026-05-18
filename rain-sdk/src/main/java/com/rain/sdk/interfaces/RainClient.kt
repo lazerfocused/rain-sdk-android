@@ -7,6 +7,7 @@ import com.rain.sdk.models.RainWithdrawResult
 import com.rain.sdk.models.RainTransactionOrder
 import com.rain.sdk.models.RainTransactionResult
 import com.rain.sdk.internal.error.RainError
+import com.turnkey.core.TurnkeyContext
 import io.portalhq.android.Portal
 import android.graphics.Bitmap
 import java.math.BigInteger
@@ -24,6 +25,12 @@ interface RainClient {
     val portal: Portal
 
     /**
+     * Computed property to safely access the Turnkey context after `initializeTurnkey`.
+     * Throws RainError.SdkNotInitialized if not initialized.
+     */
+    val turnkey: TurnkeyContext
+
+    /**
      * Initializes the SDK with a Portal token and chain-specific RPC endpoints.
      *
      * @param portalSessionToken A valid Portal session token
@@ -37,6 +44,28 @@ interface RainClient {
         portalSessionToken: String = "",
         rpcEndpoints: Map<Int, String>,
         chainId: Int? = null
+    )
+
+    /**
+     * Initializes the SDK with an authenticated Turnkey context and chain-specific RPC endpoints.
+     *
+     * Turnkey authentication (passkeys, auth proxy, OAuth, OTP) happens outside Rain via the
+     * official Turnkey Kotlin SDK. Initialize `TurnkeyContext` in your `Application.onCreate()`,
+     * complete login, then pass the singleton here to register it as Rain's wallet provider.
+     *
+     * @param turnkey The authenticated `TurnkeyContext` singleton.
+     * @param rpcEndpoints Map of numeric chain IDs to RPC URLs.
+     * @param chainId Optional default Chain ID. If not provided, SDK will select a suitable one from rpcEndpoints.
+     * @param walletAddress Optional explicit EVM address override. When null, Rain uses the first
+     *                      available Ethereum account from the Turnkey context.
+     * @throws RainError if initialization fails (e.g., invalid RPC URLs or no usable EVM wallet).
+     */
+    @Throws(RainError::class)
+    suspend fun initializeTurnkey(
+        turnkey: TurnkeyContext,
+        rpcEndpoints: Map<Int, String>,
+        chainId: Int? = null,
+        walletAddress: String? = null
     )
 
     /**

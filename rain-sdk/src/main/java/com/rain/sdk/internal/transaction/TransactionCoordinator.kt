@@ -1,27 +1,21 @@
 package com.rain.sdk.internal.transaction
 
-import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.internal.core.RainTransactionBuilderImpl
-import com.rain.sdk.internal.core.PortalManager
-import com.rain.sdk.internal.transaction.WithdrawCollateralRequest
-import com.rain.sdk.utils.EthereumConverter
-import io.portalhq.android.provider.data.EthTransactionParam
-import io.portalhq.android.storage.mobile.PortalNamespace
-import kotlinx.coroutines.Dispatchers
+import com.rain.sdk.internal.error.RainError
+import com.rain.sdk.internal.provider.WalletProvider
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.math.BigInteger
 
 /**
  * Orchestrates the complete transaction flow.
  *
- * Coordinates between validator, transaction builder, signer, and executor
- * to handle the entire lifecycle of a transaction from validation to execution.
+ * Coordinates between validator, transaction builder, signer, and executor — all of which
+ * route through the active [WalletProvider] (Portal or Turnkey) — to handle the entire
+ * lifecycle of a transaction from validation to execution.
  */
 internal class TransactionCoordinator(
-  private val portalManager: PortalManager,
+  private val walletProvider: () -> WalletProvider?,
   private val validator: TransactionValidator,
   private val signer: TransactionSigner,
   private val executor: TransactionExecutor
@@ -33,7 +27,7 @@ internal class TransactionCoordinator(
    * Flow:
    * 1. Validate request parameters
    * 2. Build EIP-712 typed data message
-   * 3. Sign the message
+   * 3. Sign the message via the active wallet provider
    * 4. Build transaction data
    * 5. Execute transaction (if autoSend=true) or return transaction data (if autoSend=false)
    *
@@ -102,13 +96,13 @@ internal class TransactionCoordinator(
   }
 
   /**
-   * Estimates gas for any transaction.
+   * Estimates gas for any transaction using the active wallet provider.
    *
    * @param chainId The chain ID
    * @param from Sender address
    * @param to Target contract address
    * @param data Transaction data (hex-encoded)
-   * @return Estimated gas fee in ETH
+   * @return Estimated gas fee in the chain's native token (e.g. ETH/AVAX)
    */
   suspend fun estimateGas(
     chainId: Int,
@@ -116,45 +110,15 @@ internal class TransactionCoordinator(
     to: String,
     data: String
   ): Double = withContext(Dispatchers.IO) {
+    val provider = walletProvider() ?: throw RainError.SdkNotInitialized()
     try {
-      val portal = portalManager.getPortalInstance()
-      
-      val ethParams = EthTransactionParam(
+      provider.estimateTransactionFee(
+        chainId = chainId,
         from = from,
         to = to,
-        gas = null,
-        gasPrice = null,
-        maxFeePerGas = null,
-        maxPriorityFeePerGas = null,
         data = data,
-        value = "0x0",
-        nonce = null
+        value = "0x0"
       )
-
-      val chainIdString = "${PortalNamespace.EIP155.value}:$chainId"
-      
-      val (gasHex, gasPriceHex) = coroutineScope {
-        val gasLimitDeferred = async { portal.ethEstimateGas(chainIdString, ethParams) }
-        val gasPriceDeferred = async { portal.ethGasPrice(chainIdString) }
-        
-        val gasLimitResult = gasLimitDeferred.await()
-        val gasPriceResult = gasPriceDeferred.await()
-        
-        val gasHex = EthereumConverter.convertPortalResultToHexString(gasLimitResult)
-        val gasPriceHex = EthereumConverter.convertPortalResultToHexString(gasPriceResult)
-        
-        Pair(gasHex, gasPriceHex)
-      }
-      
-      // Fee = gasLimit * gasPrice
-      val gasLimit = BigInteger(gasHex.removePrefix("0x"), 16)
-      val gasPrice = BigInteger(gasPriceHex.removePrefix("0x"), 16)
-      
-      val feeWei = gasLimit.multiply(gasPrice)
-      
-      // Convert Wei to ETH (Double) using EthereumConverter
-      EthereumConverter.convertWeiToEth(feeWei)
-
     } catch (e: RainError) {
       throw e
     } catch (e: Exception) {
