@@ -8,7 +8,7 @@ import com.rain.sdk.interfaces.RainClient
 import com.rain.sdk.models.RainAdminSignature
 import com.rain.sdk.models.RainWithdrawAddresses
 import com.rain.sdk.sample.NetworkClient
-import io.portalhq.android.storage.mobile.PortalNamespace
+import com.rain.sdk.sample.SampleLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,25 +23,32 @@ class CollateralWithdrawViewModel(
     val state: StateFlow<CollateralWithdrawUiState> = _state.asStateFlow()
 
     fun loadContractInfo(accessToken: String) {
+        SampleLog.i("Withdraw.contract", "loading contract info")
         _state.update { it.copy(isLoadingContract = true, errorText = null) }
 
         viewModelScope.launch {
             try {
-                val walletAddress = rainClient.portal.getAddress(PortalNamespace.EIP155)
-                    ?: throw Exception("Wallet address not found")
+                val walletAddress = rainClient.getAddress()
+                SampleLog.d("Withdraw.contract", "wallet address=$walletAddress")
 
                 val contractResponse = NetworkClient.fetchCollateralContract(accessToken)
                 if (contractResponse.result.isFailure) {
+                    val err = contractResponse.result.exceptionOrNull()
+                    SampleLog.e("Withdraw.contract", "fetchCollateralContract failed: ${err?.message}", err)
                     _state.update {
                         it.copy(
                             isLoadingContract = false,
-                            errorText = "Failed to fetch contract: ${contractResponse.result.exceptionOrNull()?.message}"
+                            errorText = "Failed to fetch contract: ${err?.message}"
                         )
                     }
                     return@launch
                 }
 
                 val contract = contractResponse.result.getOrThrow()
+                SampleLog.i(
+                    "Withdraw.contract",
+                    "contract=${contract.address} tokens=${contract.tokens.size} chainId=${contract.chainId}"
+                )
 
                 val tokens = contract.tokens.map { token ->
                     WithdrawTokenOption(
@@ -66,6 +73,7 @@ class CollateralWithdrawViewModel(
                     )
                 }
             } catch (e: Exception) {
+                SampleLog.e("Withdraw.contract", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
                         isLoadingContract = false,
@@ -97,11 +105,14 @@ class CollateralWithdrawViewModel(
             return
         }
 
+        SampleLog.i(
+            "Withdraw.estimate",
+            "token=${token.symbol} amount=$amount decimals=${token.decimals} to=${current.recipientAddress}"
+        )
         _state.update { it.copy(isEstimating = true, errorText = null, estimatedGas = null) }
 
         viewModelScope.launch {
             try {
-                // 1. Fetch admin signature (needed for tx data)
                 val amountNative = (amount * Math.pow(10.0, token.decimals.toDouble())).toLong()
                 val sigResponse = NetworkClient.fetchAdminSignature(
                     accessToken = accessToken,
@@ -112,16 +123,19 @@ class CollateralWithdrawViewModel(
                 )
 
                 if (sigResponse.result.isFailure) {
+                    val err = sigResponse.result.exceptionOrNull()
+                    SampleLog.e("Withdraw.estimate", "fetchAdminSignature failed: ${err?.message}", err)
                     _state.update {
                         it.copy(
                             isEstimating = false,
-                            errorText = "Failed to get signature: ${sigResponse.result.exceptionOrNull()?.message}"
+                            errorText = "Failed to get signature: ${err?.message}"
                         )
                     }
                     return@launch
                 }
 
                 val (sigDetails, expiresAt) = sigResponse.result.getOrThrow()
+                SampleLog.d("Withdraw.estimate", "got admin signature expiresAt=$expiresAt")
 
                 // Store signature for later use
                 _state.update {
@@ -163,6 +177,7 @@ class CollateralWithdrawViewModel(
                     data = txData
                 )
 
+                SampleLog.i("Withdraw.estimate", "success — estimatedGas=$gas AVAX")
                 _state.update {
                     it.copy(
                         estimatedGas = "$gas AVAX",
@@ -170,6 +185,7 @@ class CollateralWithdrawViewModel(
                     )
                 }
             } catch (e: Exception) {
+                SampleLog.e("Withdraw.estimate", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
                         isEstimating = false,
@@ -189,12 +205,16 @@ class CollateralWithdrawViewModel(
             return
         }
 
+        SampleLog.i(
+            "Withdraw.execute",
+            "token=${token.symbol} amount=$amount to=${current.recipientAddress}"
+        )
         _state.update { it.copy(isWithdrawing = true, errorText = null, withdrawResult = null) }
 
         viewModelScope.launch {
             try {
-                // Fetch fresh admin signature if not already present
                 val adminSig = current.adminSignature ?: run {
+                    SampleLog.d("Withdraw.execute", "fetching fresh admin signature")
                     val amountNative = (amount * Math.pow(10.0, token.decimals.toDouble())).toLong()
                     val sigResponse = NetworkClient.fetchAdminSignature(
                         accessToken = accessToken,
@@ -204,7 +224,9 @@ class CollateralWithdrawViewModel(
                         recipientAddress = current.walletAddress
                     )
                     if (sigResponse.result.isFailure) {
-                        throw Exception("Failed to get signature: ${sigResponse.result.exceptionOrNull()?.message}")
+                        val err = sigResponse.result.exceptionOrNull()
+                        SampleLog.e("Withdraw.execute", "fetchAdminSignature failed: ${err?.message}", err)
+                        throw Exception("Failed to get signature: ${err?.message}")
                     }
                     val (sigDetails, expiresAt) = sigResponse.result.getOrThrow()
                     RainAdminSignature(
@@ -230,14 +252,16 @@ class CollateralWithdrawViewModel(
                     autoSend = true
                 )
 
+                SampleLog.i("Withdraw.execute", "success — txHash=${result.transactionHash}")
                 _state.update {
                     it.copy(
                         isWithdrawing = false,
                         withdrawResult = result.transactionHash ?: "No tx hash returned",
-                        adminSignature = null // Clear used signature
+                        adminSignature = null
                     )
                 }
             } catch (e: Exception) {
+                SampleLog.e("Withdraw.execute", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
                         isWithdrawing = false,

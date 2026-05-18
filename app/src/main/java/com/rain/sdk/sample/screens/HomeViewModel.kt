@@ -1,11 +1,14 @@
 package com.rain.sdk.sample.screens
 
+import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.rain.sdk.RainChain
 import com.rain.sdk.interfaces.RainClient
 import com.rain.sdk.sample.NetworkClient
+import com.rain.sdk.sample.SampleLog
+import com.rain.sdk.sample.TurnkeyAuthSample
 import io.portalhq.android.mpc.data.BackupConfigs
 import io.portalhq.android.mpc.data.BackupMethods
 import io.portalhq.android.mpc.data.PasswordStorageConfig
@@ -15,6 +18,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+enum class WalletMode { Portal, Turnkey }
+
 class HomeViewModel(
     private val rainClient: RainClient
 ) : ViewModel() {
@@ -23,6 +28,11 @@ class HomeViewModel(
         HomeUiState(isInitialized = rainClient.isInitialized)
     )
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
+
+    fun onModeChanged(mode: WalletMode) {
+        SampleLog.d("Home", "mode changed: $mode")
+        _state.update { it.copy(mode = mode) }
+    }
 
     fun onSessionTokenChanged(value: String) {
         _state.update { it.copy(sessionToken = value) }
@@ -36,8 +46,27 @@ class HomeViewModel(
         _state.update { it.copy(pin = value) }
     }
 
+    fun onTurnkeyOrgIdChanged(value: String) {
+        _state.update { it.copy(turnkeyOrgId = value) }
+    }
+
+    fun onTurnkeyAuthProxyConfigIdChanged(value: String) {
+        _state.update { it.copy(turnkeyAuthProxyConfigId = value) }
+    }
+
+    fun onTurnkeyEmailChanged(value: String) {
+        _state.update { it.copy(turnkeyEmail = value) }
+    }
+
+    fun onTurnkeyOtpCodeChanged(value: String) {
+        _state.update { it.copy(turnkeyOtpCode = value) }
+    }
+
     fun initializeSdk() {
         if (_state.value.sessionToken.isBlank()) return
+
+        val tokenMask = SampleLog.maskToken(_state.value.sessionToken)
+        SampleLog.i("Portal.init", "calling initializePortal sessionToken=$tokenMask chainId=${RainChain.AVALANCHE_TESTNET}")
 
         try {
             val rpcConfig = mapOf(
@@ -50,6 +79,7 @@ class HomeViewModel(
                 chainId = RainChain.AVALANCHE_TESTNET
             )
 
+            SampleLog.i("Portal.init", "success — isInitialized=${rainClient.isInitialized}")
             _state.update {
                 it.copy(
                     isInitialized = rainClient.isInitialized,
@@ -58,6 +88,7 @@ class HomeViewModel(
                 )
             }
         } catch (e: Exception) {
+            SampleLog.e("Portal.init", "failed: ${e.message}", e)
             _state.update {
                 it.copy(
                     statusText = "Error: ${e.message}",
@@ -82,14 +113,17 @@ class HomeViewModel(
             return
         }
 
+        SampleLog.i("Portal.recover", "fetching backup share")
         _state.update { it.copy(statusText = "Fetching backup share...", isLoading = true) }
         viewModelScope.launch {
             try {
                 val backupResponse = NetworkClient.fetchBackupShare(currentState.accessToken)
                 if (backupResponse.result.isFailure) {
+                    val err = backupResponse.result.exceptionOrNull()
+                    SampleLog.e("Portal.recover", "fetchBackupShare failed: ${err?.message}", err)
                     _state.update {
                         it.copy(
-                            statusText = "Failed to fetch backup share: ${backupResponse.result.exceptionOrNull()?.message}",
+                            statusText = "Failed to fetch backup share: ${err?.message}",
                             isLoading = false
                         )
                     }
@@ -97,6 +131,7 @@ class HomeViewModel(
                 }
 
                 val cipherText = backupResponse.result.getOrThrow()
+                SampleLog.d("Portal.recover", "got backup share, recovering wallet...")
                 _state.update { it.copy(statusText = "Recovering wallet...") }
 
                 val portal = rainClient.portal
@@ -109,9 +144,11 @@ class HomeViewModel(
                     BackupMethods.Password,
                     backupConfigs
                 ) { status ->
+                    SampleLog.d("Portal.recover", "status: $status")
                     _state.update { it.copy(statusText = "Recovery status: $status") }
                 }
 
+                SampleLog.i("Portal.recover", "success — wallet ready")
                 _state.update {
                     it.copy(
                         isRecovered = true,
@@ -121,6 +158,7 @@ class HomeViewModel(
                     )
                 }
             } catch (e: Exception) {
+                SampleLog.e("Portal.recover", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
                         statusText = "Recovery failed: ${e.message}",
@@ -131,17 +169,152 @@ class HomeViewModel(
         }
     }
 
+    fun sendTurnkeyOtp(app: Application) {
+        val s = _state.value
+        if (s.turnkeyOrgId.isBlank() || s.turnkeyAuthProxyConfigId.isBlank() || s.turnkeyEmail.isBlank()) {
+            _state.update { it.copy(statusText = "Org ID, Auth Proxy Config ID, and Email are required") }
+            return
+        }
+
+        SampleLog.i(
+            "Turnkey.otpInit",
+            "starting email-OTP flow email=${SampleLog.maskEmail(s.turnkeyEmail)}"
+        )
+        _state.update { it.copy(isLoading = true, statusText = "Initializing Turnkey...") }
+        viewModelScope.launch {
+            try {
+                TurnkeyAuthSample.init(app, s.turnkeyOrgId, s.turnkeyAuthProxyConfigId)
+
+                _state.update { it.copy(statusText = "Sending OTP to ${s.turnkeyEmail}...") }
+                val otpId = TurnkeyAuthSample.sendEmailOtp(s.turnkeyEmail)
+
+                SampleLog.i("Turnkey.otpInit", "OTP sent")
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        turnkeyOtpId = otpId,
+                        statusText = "OTP sent — check your email"
+                    )
+                }
+            } catch (e: Exception) {
+                SampleLog.e("Turnkey.otpInit", "failed: ${e.message}", e)
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        statusText = "Turnkey OTP init failed: ${e.message}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun verifyTurnkeyOtp() {
+        val s = _state.value
+        val otpId = s.turnkeyOtpId
+        if (otpId.isNullOrBlank()) {
+            _state.update { it.copy(statusText = "Send OTP first") }
+            return
+        }
+        if (s.turnkeyOtpCode.isBlank()) {
+            _state.update { it.copy(statusText = "OTP code required") }
+            return
+        }
+
+        SampleLog.i("Turnkey.otpVerify", "verifying OTP")
+        _state.update { it.copy(isLoading = true, statusText = "Verifying OTP...") }
+        viewModelScope.launch {
+            try {
+                TurnkeyAuthSample.verifyEmailOtp(otpId, s.turnkeyOtpCode, s.turnkeyEmail)
+                SampleLog.i(
+                    "Turnkey.otpVerify",
+                    "session active subOrgId=${SampleLog.maskToken(TurnkeyAuthSample.subOrganizationId)}"
+                )
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        turnkeySessionActive = true,
+                        statusText = "Turnkey session active — initialize Rain to continue"
+                    )
+                }
+            } catch (e: Exception) {
+                SampleLog.e("Turnkey.otpVerify", "failed: ${e.message}", e)
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        statusText = "OTP verification failed: ${e.message}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun initializeRainWithTurnkey() {
+        if (!_state.value.turnkeySessionActive) {
+            _state.update { it.copy(statusText = "Verify OTP first") }
+            return
+        }
+        SampleLog.i("Turnkey.rainInit", "initializing Rain w/ Turnkey on chainId=${RainChain.AVALANCHE_TESTNET}")
+        _state.update { it.copy(isLoading = true, statusText = "Initializing Rain with Turnkey...") }
+        viewModelScope.launch {
+            try {
+                val createdNewWallet = TurnkeyAuthSample.ensureEthereumWallet()
+                if (createdNewWallet) {
+                    _state.update { it.copy(statusText = "Created Turnkey wallet, initializing Rain...") }
+                }
+
+                val rpcConfig = mapOf(
+                    RainChain.AVALANCHE_TESTNET to "https://api.avax-test.network/ext/bc/C/rpc"
+                )
+                rainClient.initializeTurnkey(
+                    turnkey = TurnkeyAuthSample.context,
+                    rpcEndpoints = rpcConfig,
+                    chainId = RainChain.AVALANCHE_TESTNET,
+                    walletAddress = null
+                )
+                val address = runCatching { rainClient.getAddress() }.getOrNull()
+                SampleLog.i(
+                    "Turnkey.rainInit",
+                    "success — isInitialized=${rainClient.isInitialized} address=$address"
+                )
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        isInitialized = rainClient.isInitialized,
+                        isRecovered = true,
+                        statusText = "Rain initialized with Turnkey — wallet ready"
+                    )
+                }
+            } catch (e: Exception) {
+                SampleLog.e("Turnkey.rainInit", "failed: ${e.message}", e)
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        statusText = "Rain Turnkey init failed: ${e.message}"
+                    )
+                }
+            }
+        }
+    }
+
     fun clearSession() {
+        SampleLog.i("Home", "session cleared")
         _state.update {
-            HomeUiState(statusText = "Session Cleared")
+            HomeUiState(statusText = "Session Cleared", mode = it.mode)
         }
     }
 }
 
 data class HomeUiState(
+    val mode: WalletMode = WalletMode.Portal,
     val sessionToken: String = "",
     val accessToken: String = "",
     val pin: String = "",
+    val turnkeyOrgId: String = "",
+    val turnkeyAuthProxyConfigId: String = "",
+    val turnkeyEmail: String = "",
+    val turnkeyOtpId: String? = null,
+    val turnkeyOtpCode: String = "",
+    val turnkeySessionActive: Boolean = false,
     val isInitialized: Boolean = false,
     val needsRecovery: Boolean = false,
     val isRecovered: Boolean = false,

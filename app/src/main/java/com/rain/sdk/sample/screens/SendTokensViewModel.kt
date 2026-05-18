@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.rain.sdk.RainChain
 import com.rain.sdk.interfaces.RainClient
+import com.rain.sdk.sample.SampleLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +51,7 @@ class SendTokensViewModel(
             return
         }
 
+        SampleLog.i("Send.native", "to=${current.recipientAddress} amount=$amount AVAX")
         _state.update { it.copy(isSending = true, errorText = null, txHash = null) }
 
         viewModelScope.launch {
@@ -59,6 +61,7 @@ class SendTokensViewModel(
                     toAddress = current.recipientAddress,
                     amount = amount
                 )
+                SampleLog.i("Send.native", "success txHash=${result.transactionHash}")
                 _state.update {
                     it.copy(
                         isSending = false,
@@ -66,6 +69,7 @@ class SendTokensViewModel(
                     )
                 }
             } catch (e: Exception) {
+                SampleLog.e("Send.native", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
                         isSending = false,
@@ -93,6 +97,10 @@ class SendTokensViewModel(
             return
         }
 
+        SampleLog.i(
+            "Send.erc20",
+            "contract=${current.contractAddress} to=${current.recipientAddress} amount=$amount decimals=$decimalsInt"
+        )
         _state.update { it.copy(isSending = true, errorText = null, txHash = null) }
 
         viewModelScope.launch {
@@ -104,6 +112,7 @@ class SendTokensViewModel(
                     amount = amount,
                     decimals = decimalsInt
                 )
+                SampleLog.i("Send.erc20", "success txHash=${result.transactionHash}")
                 _state.update {
                     it.copy(
                         isSending = false,
@@ -111,6 +120,7 @@ class SendTokensViewModel(
                     )
                 }
             } catch (e: Exception) {
+                SampleLog.e("Send.erc20", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
                         isSending = false,
