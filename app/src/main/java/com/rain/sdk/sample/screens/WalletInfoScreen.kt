@@ -120,10 +120,10 @@ fun WalletInfoScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // Portal Address (User Wallet)
+        // User wallet address (provider-agnostic — Portal or Turnkey)
         if (state.portalAddress.isNotEmpty()) {
             AddressCard(
-                title = "Portal Address (User Wallet)",
+                title = "Wallet Address",
                 address = state.portalAddress,
                 isValid = state.isAddressValid(state.portalAddress),
                 qrBitmap = state.portalQrBitmap,

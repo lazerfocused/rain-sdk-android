@@ -188,6 +188,17 @@ interface RainClient {
     suspend fun getERC20Balances(chainId: Int): Map<String, Double>
 
     /**
+     * Gets all balances (native + ERC-20) for the current wallet on the given network.
+     * The native token balance is stored under the empty-string key (`""`).
+     *
+     * @param chainId The numeric chain ID
+     * @return Map of token contract address to balance (Double), with native under key `""`
+     * @throws RainError if balances cannot be retrieved
+     */
+    @Throws(RainError::class)
+    suspend fun getBalances(chainId: Int): Map<String, Double>
+
+    /**
      * Generates an Android Bitmap containing a QR code for a wallet address.
      * 
      * @param address Optional address to generate the QR code for. If null, the configured provider's wallet address will be retrieved and used.

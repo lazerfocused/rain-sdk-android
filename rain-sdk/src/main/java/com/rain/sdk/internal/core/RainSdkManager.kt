@@ -312,6 +312,21 @@ internal class RainSdkManager(
     }
   }
 
+  override suspend fun getBalances(chainId: Int): Map<String, Double> {
+    if (!isInitialized) throw RainError.SdkNotInitialized()
+    val provider = walletProvider ?: throw RainError.SdkNotInitialized()
+    return try {
+      val result = provider.getERC20Balances(chainId).toMutableMap()
+      result[""] = provider.getNativeBalance(chainId)
+      result
+    } catch (e: Exception) {
+      if (e is CancellationException) throw e
+      if (e is RainError) throw e
+      Timber.e(e, "Rain SDK: Failed to get balances")
+      throw errorMapper.mapTransactionError(e)
+    }
+  }
+
   override suspend fun generateAddressQRCode(address: String?, width: Int, height: Int): Bitmap {
     if (!isInitialized) throw RainError.SdkNotInitialized()
 
