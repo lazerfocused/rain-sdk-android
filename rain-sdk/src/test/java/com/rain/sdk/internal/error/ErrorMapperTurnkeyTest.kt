@@ -1,7 +1,7 @@
 package com.rain.sdk.internal.error
 
 import com.google.common.truth.Truth.assertThat
-import org.junit.Assume.assumeTrue
+import com.rain.sdk.internal.helpers.assumeJdk24
 import org.junit.Before
 import org.junit.Test
 
@@ -24,14 +24,7 @@ class ErrorMapperTurnkeyTest {
     private val mapper = ErrorMapper()
 
     @Before
-    fun requireJdk24() {
-        val major = System.getProperty("java.version")?.substringBefore('.')?.toIntOrNull() ?: 0
-        assumeTrue(
-            "Turnkey SDK requires JDK 24+ at test runtime (current: $major). " +
-                "Set JAVA_HOME to JDK 24 or newer to exercise these tests.",
-            major >= 24
-        )
-    }
+    fun requireJdk24() = assumeJdk24()
 
     @Test
     fun `mapTurnkeyError InvalidSession returns TokenExpired`() {

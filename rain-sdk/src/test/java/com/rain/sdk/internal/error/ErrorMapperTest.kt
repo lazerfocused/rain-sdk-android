@@ -1,7 +1,7 @@
 package com.rain.sdk.internal.error
 
 import com.google.common.truth.Truth.assertThat
-import org.junit.Assume.assumeTrue
+import com.rain.sdk.internal.helpers.assumeJdk24
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
@@ -21,13 +21,7 @@ class ErrorMapperTest {
     private val mapper = ErrorMapper()
 
     @Before
-    fun requireJdk24() {
-        val major = System.getProperty("java.version")?.substringBefore('.')?.toIntOrNull() ?: 0
-        assumeTrue(
-            "ErrorMapper transitively loads TurnkeyKotlinError (JDK 24 class). Current: $major",
-            major >= 24
-        )
-    }
+    fun requireJdk24() = assumeJdk24()
 
     // ---- mapSigningError -----------------------------------------------------------
 

@@ -4,14 +4,13 @@ import com.google.common.truth.Truth.assertThat
 import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.internal.helpers.MockRpcServer
 import com.rain.sdk.internal.helpers.TestFixtures
+import com.rain.sdk.internal.helpers.assumeJdk24
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertThrows
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
-import java.net.SocketTimeoutException
 
 /**
  * Adapter-level tests for [TurnkeyWalletProvider]. Mirrors iOS's `TurnkeyAdapterTests.swift`
@@ -31,11 +30,7 @@ class TurnkeyAdapterTest {
 
     @Before
     fun requireJdk24() {
-        val major = System.getProperty("java.version")?.substringBefore('.')?.toIntOrNull() ?: 0
-        assumeTrue(
-            "Turnkey SDK requires JDK 24+ at test runtime (current: $major).",
-            major >= 24
-        )
+        assumeJdk24()
         rpc = MockRpcServer().also { it.start() }
     }
 
@@ -52,7 +47,10 @@ class TurnkeyAdapterTest {
         turnkey = turnkey,
         rpcEndpoints = mapOf(chainId to rpc.urlFor(chainId)),
         walletAddressOverride = walletAddressOverride,
-        httpClient = OkHttpClient()
+        httpClient = OkHttpClient(),
+        // Zero out the 1s production polling delay so retry-based tests run in milliseconds
+        // and regressions in failure detection fail fast instead of hanging for 30s.
+        pollingIntervalMs = 0L
     )
 
     // ---- Polling: pending → broadcasted -----------------------------------------
@@ -159,7 +157,7 @@ class TurnkeyAdapterTest {
 
     @Test
     fun `estimateTransactionFee surfaces RPC network failure as NetworkError`() {
-        rpc.stubError(method = "eth_estimateGas", error = SocketTimeoutException("timeout"))
+        rpc.stubNetworkFailure(method = "eth_estimateGas")
 
         val provider = makeProvider()
 
@@ -196,10 +194,7 @@ class TurnkeyAdapterTest {
 
     @Test
     fun `getERC20Balance maps RPC network failure to NetworkError`() {
-        rpc.stubError(
-            method = "eth_call",
-            error = SocketTimeoutException("not connected to internet")
-        )
+        rpc.stubNetworkFailure(method = "eth_call")
 
         val provider = makeProvider()
         assertThrows(RainError.NetworkError::class.java) {
@@ -293,6 +288,11 @@ class TurnkeyAdapterTest {
                 )
             }
         }.exceptionOrNull()
+        // Bare provider surfaces the underlying exception unwrapped; RainSdkManager would
+        // wrap it via ErrorMapper.mapSigningError. Pin the type so a future implicit-wrap
+        // refactor fails this test instead of silently passing.
+        assertThat(ex).isInstanceOf(RuntimeException::class.java)
+        assertThat(ex).isNotInstanceOf(RainError::class.java)
         assertThat(ex?.message).contains("hardware key denied")
     }
 

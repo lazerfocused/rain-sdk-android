@@ -2,6 +2,7 @@ package com.rain.sdk.internal.provider
 
 import com.google.common.truth.Truth.assertThat
 import com.rain.sdk.internal.error.RainError
+import com.rain.sdk.internal.helpers.assumeJdk24
 import com.rain.sdk.models.RainTransactionOrder
 import com.turnkey.core.models.Wallet
 import com.turnkey.types.V1AssetBalance
@@ -11,7 +12,6 @@ import com.turnkey.types.V1SignRawPayloadResult
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertThrows
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -24,14 +24,7 @@ class TurnkeyWalletProviderTest {
      * (R8/D8 dexes Turnkey's bytecode regardless of host JVM version).
      */
     @Before
-    fun requireJdk24() {
-        val major = System.getProperty("java.version")?.substringBefore('.')?.toIntOrNull() ?: 0
-        assumeTrue(
-            "Turnkey SDK requires JDK 24+ at test runtime (current: $major). " +
-                "Set JAVA_HOME to a JDK 24 or newer to run these tests.",
-            major >= 24
-        )
-    }
+    fun requireJdk24() = assumeJdk24()
 
     private fun makeProvider(
         turnkey: MockTurnkey = MockTurnkey(),

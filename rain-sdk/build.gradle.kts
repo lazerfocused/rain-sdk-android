@@ -92,6 +92,9 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.truth)
     testImplementation(libs.okhttp.mockwebserver)
+    // Real org.json implementation for unit tests — production code uses Android's bundled
+    // org.json (which AGP stubs on the test JVM and makes throw "not mocked" at runtime).
+    testImplementation(libs.json)
 }
 
 mavenPublishing {

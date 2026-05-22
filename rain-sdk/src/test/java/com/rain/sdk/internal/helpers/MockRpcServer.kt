@@ -4,6 +4,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
@@ -18,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
  * ```
  * val rpc = MockRpcServer().also { it.start() }
  * rpc.stub(method = "eth_estimateGas", result = "0x5208")
- * rpc.stubError(method = "eth_call", error = SocketTimeoutException("timeout"))
+ * rpc.stubNetworkFailure(method = "eth_call")
  * val provider = TurnkeyWalletProvider(rpcEndpoints = mapOf(1 to rpc.urlFor(1)), ...)
  * ...
  * rpc.shutdown()
@@ -30,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap
 internal class MockRpcServer {
     private val server = MockWebServer()
 
-    private data class Stub(val result: Any? = null, val error: Throwable? = null)
+    private data class Stub(val result: Any? = null, val networkFailure: Boolean = false)
 
     private val stubs = ConcurrentHashMap<String, Stub>()
     private val recorded = mutableListOf<String>()
@@ -48,9 +49,9 @@ internal class MockRpcServer {
                         """{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unstubbed method $method"}}"""
                     )
 
-                stub.error?.let {
+                if (stub.networkFailure) {
                     // Force a network-level failure: drop the socket so OkHttp surfaces an IOException.
-                    return MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AT_START)
+                    return MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START)
                 }
 
                 val payload = JSONObject().apply {
@@ -86,8 +87,8 @@ internal class MockRpcServer {
      * surfaces an `IOException` to the caller — used to drive the `RainError.NetworkError`
      * code path in [com.rain.sdk.internal.provider.TurnkeyWalletProvider].
      */
-    fun stubError(method: String, error: Throwable) {
-        stubs[method] = Stub(error = error)
+    fun stubNetworkFailure(method: String) {
+        stubs[method] = Stub(networkFailure = true)
     }
 
     /** Methods recorded in dispatch order. Reset by [resetRecordings]. */
