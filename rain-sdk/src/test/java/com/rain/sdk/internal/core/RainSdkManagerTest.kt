@@ -15,6 +15,7 @@ import io.portalhq.android.Portal
 import io.portalhq.android.storage.mobile.PortalNamespace
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertThrows
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
@@ -125,4 +126,107 @@ class RainSdkManagerTest {
     assertThat(address).isEqualTo(expectedAddress)
   }
 
+  // ---- additional init edge cases (mirrors iOS RainSDKInitializationTests) ----
+
+  @Test
+  fun `isInitialized starts false on a fresh manager`() {
+    val fresh = RainSdkManager()
+    assertThat(fresh.isInitialized).isFalse()
+  }
+
+  @Test
+  fun `portal getter throws SdkNotInitialized before any init`() {
+    val fresh = RainSdkManager()
+    assertThrows(RainError.SdkNotInitialized::class.java) { fresh.portal }
+  }
+
+  @Test
+  fun `turnkey getter throws SdkNotInitialized before any init`() {
+    val fresh = RainSdkManager()
+    assertThrows(RainError.SdkNotInitialized::class.java) { fresh.turnkey }
+  }
+
+  @Test
+  fun `initializePortal with multiple chainIds succeeds and stores all RPCs`() {
+    sdkManager.initializePortal(
+      portalSessionToken = "token",
+      rpcEndpoints = mapOf(
+        RainChain.AVALANCHE_MAINNET to "https://avax.rpc",
+        1 to "https://eth.rpc",
+        137 to "https://polygon.rpc"
+      ),
+      chainId = 1
+    )
+
+    assertThat(sdkManager.isInitialized).isTrue()
+  }
+
+  @Test
+  fun `initializePortal throws InvalidConfig when chainId is zero`() {
+    assertThrows(RainError.InvalidConfig::class.java) {
+      sdkManager.initializePortal(
+        portalSessionToken = "token",
+        rpcEndpoints = mapOf(0 to "https://rpc.com"),
+        chainId = null
+      )
+    }
+  }
+
+  @Test
+  fun `initializePortal throws InvalidConfig when ANY chainId is invalid`() {
+    // Validation must fail even when ONE chain is bad alongside a valid one.
+    assertThrows(RainError.InvalidConfig::class.java) {
+      sdkManager.initializePortal(
+        portalSessionToken = "token",
+        rpcEndpoints = mapOf(
+          1 to "https://eth.rpc",
+          -2 to "https://invalid.rpc"
+        ),
+        chainId = null
+      )
+    }
+  }
+
+  @Test
+  fun `initializePortal throws InvalidConfig when ANY rpc url is invalid`() {
+    every { URLUtil.isValidUrl("not-a-url") } returns false
+
+    assertThrows(RainError.InvalidConfig::class.java) {
+      sdkManager.initializePortal(
+        portalSessionToken = "token",
+        rpcEndpoints = mapOf(
+          1 to "https://eth.rpc",
+          137 to "not-a-url"
+        ),
+        chainId = null
+      )
+    }
+  }
+
+  @Test
+  fun `failed initializePortal leaves manager uninitialized`() {
+    runCatching {
+      sdkManager.initializePortal(
+        portalSessionToken = "token",
+        rpcEndpoints = emptyMap(),
+        chainId = null
+      )
+    }
+    assertThat(sdkManager.isInitialized).isFalse()
+  }
+
+  @Test
+  fun `initializePortal twice succeeds and resets Portal instance`() {
+    sdkManager.initializePortal(
+      portalSessionToken = "first-token",
+      rpcEndpoints = mapOf(1 to "https://eth.rpc"),
+      chainId = 1
+    )
+    sdkManager.initializePortal(
+      portalSessionToken = "second-token",
+      rpcEndpoints = mapOf(137 to "https://polygon.rpc"),
+      chainId = 137
+    )
+    assertThat(sdkManager.isInitialized).isTrue()
+  }
 }

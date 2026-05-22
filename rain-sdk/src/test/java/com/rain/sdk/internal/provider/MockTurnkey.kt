@@ -37,6 +37,44 @@ internal class MockTurnkeyClient(
     var mockActivities: List<V1Activity> = emptyList()
 ) : TurnkeyClientProtocol {
 
+    /**
+     * Status response fixture for `getSendTransactionStatus`. Mirrors iOS's `StatusFixture`.
+     * Use the factory methods on the companion object to produce typical results.
+     */
+    data class StatusFixture(
+        val txHash: String? = null,
+        val txStatus: String = "TX_STATUS_BROADCASTED",
+        val txError: String? = null,
+        val errorMessage: String? = null
+    ) {
+        companion object {
+            fun broadcasted(hash: String) = StatusFixture(txHash = hash, txStatus = "TX_STATUS_BROADCASTED")
+            fun pending() = StatusFixture(txHash = null, txStatus = "TX_STATUS_PENDING")
+            fun failed(message: String = "broadcast failed") =
+                StatusFixture(txHash = null, txStatus = "TX_STATUS_FAILED", txError = message)
+        }
+    }
+
+    /**
+     * Optional queue of status responses returned sequentially by `getSendTransactionStatus`.
+     * When non-empty, each call consumes the next entry; the final entry is reused for
+     * subsequent calls. When empty (default), a single BROADCASTED status containing
+     * [mockTransactionHash] is returned.
+     */
+    var sendTransactionStatusQueue: MutableList<StatusFixture> = mutableListOf()
+
+    /** When set, [getWalletAddressBalances] throws this instead of producing a response. */
+    var walletAddressBalancesError: Exception? = null
+
+    /** When set, [ethSendTransaction] throws this instead of producing a response. */
+    var ethSendTransactionError: Exception? = null
+
+    /** When set, [getSendTransactionStatus] throws this instead of producing a response. */
+    var sendTransactionStatusError: Exception? = null
+
+    /** When set, [getActivities] throws this instead of producing a response. */
+    var getActivitiesError: Exception? = null
+
     val walletAddressBalanceCalls = mutableListOf<TGetWalletAddressBalancesBody>()
     val ethSendTransactionCalls = mutableListOf<TEthSendTransactionBody>()
     val sendTransactionStatusCalls = mutableListOf<TGetSendTransactionStatusBody>()
@@ -46,6 +84,7 @@ internal class MockTurnkeyClient(
         input: TGetWalletAddressBalancesBody
     ): TGetWalletAddressBalancesResponse {
         walletAddressBalanceCalls += input
+        walletAddressBalancesError?.let { throw it }
         return TGetWalletAddressBalancesResponse(balances = mockBalances)
     }
 
@@ -53,6 +92,7 @@ internal class MockTurnkeyClient(
         input: TEthSendTransactionBody
     ): TEthSendTransactionResponse {
         ethSendTransactionCalls += input
+        ethSendTransactionError?.let { throw it }
         return TEthSendTransactionResponse(
             activity = MockTurnkey.makeActivity(
                 id = UUID.randomUUID().toString(),
@@ -71,11 +111,18 @@ internal class MockTurnkeyClient(
         input: TGetSendTransactionStatusBody
     ): TGetSendTransactionStatusResponse {
         sendTransactionStatusCalls += input
+        sendTransactionStatusError?.let { throw it }
+
+        val fixture: StatusFixture = when {
+            sendTransactionStatusQueue.isEmpty() -> StatusFixture.broadcasted(mockTransactionHash)
+            sendTransactionStatusQueue.size == 1 -> sendTransactionStatusQueue[0]
+            else -> sendTransactionStatusQueue.removeAt(0)
+        }
         return TGetSendTransactionStatusResponse(
             error = null,
-            eth = V1EthSendTransactionStatus(txHash = mockTransactionHash),
-            txError = null,
-            txStatus = "TX_STATUS_BROADCASTED"
+            eth = fixture.txHash?.let { V1EthSendTransactionStatus(txHash = it) },
+            txError = fixture.txError,
+            txStatus = fixture.txStatus
         )
     }
 
@@ -83,6 +130,7 @@ internal class MockTurnkeyClient(
         input: TGetActivitiesBody
     ): TGetActivitiesResponse {
         getActivitiesCalls += input
+        getActivitiesError?.let { throw it }
         return TGetActivitiesResponse(activities = mockActivities)
     }
 }
@@ -118,6 +166,9 @@ internal class MockTurnkey(
     var refreshWalletsCallCount: Int = 0
     val signRawPayloadCalls = mutableListOf<SignRawPayloadCall>()
 
+    /** When set, [signRawPayload] throws this instead of returning [mockSignature]. */
+    var signRawPayloadError: Exception? = null
+
     override suspend fun refreshWallets() {
         refreshWalletsCallCount++
     }
@@ -129,6 +180,7 @@ internal class MockTurnkey(
         hashFunction: V1HashFunction
     ): V1SignRawPayloadResult {
         signRawPayloadCalls += SignRawPayloadCall(signWith, payload, encoding, hashFunction)
+        signRawPayloadError?.let { throw it }
         return mockSignature
     }
 
