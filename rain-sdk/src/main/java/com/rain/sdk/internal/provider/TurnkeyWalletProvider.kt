@@ -17,7 +17,9 @@ import com.turnkey.types.V1HashFunction
 import com.turnkey.types.V1Pagination
 import com.turnkey.types.V1PayloadEncoding
 import com.turnkey.types.V1SignRawPayloadResult
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -472,7 +474,11 @@ internal class TurnkeyWalletProvider(
             .build()
 
         val raw = try {
-            httpClient.newCall(request).execute().use { it.body?.string() ?: "{}" }
+            // okhttp's execute() is blocking — must run off the main thread to avoid
+            // NetworkOnMainThreadException when called from a UI-dispatched coroutine.
+            withContext(Dispatchers.IO) {
+                httpClient.newCall(request).execute().use { it.body?.string() ?: "{}" }
+            }
         } catch (e: Exception) {
             Timber.e(e, "Rain SDK: Turnkey RPC request failed for $method on chainId=$chainId")
             throw RainError.NetworkError(message = "RPC request failed for $method", cause = e)
