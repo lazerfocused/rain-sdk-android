@@ -9,7 +9,7 @@ import java.io.IOException
 /**
  * Unit tests for [ErrorMapper] — covers the non-Turnkey classification paths (signing
  * vs transaction, keyword-based user-reject / insufficient-funds detection, Portal-style
- * provider mapping). Mirrors iOS's `ErrorMappingTests.swift`.
+ * provider mapping).
  *
  * Gated on JDK 24+: `ErrorMapper` references `com.turnkey...TurnkeyKotlinError` in its
  * `is TurnkeyKotlinError` branch (class file version 68), and that reference is resolved

@@ -56,7 +56,7 @@ internal class ErrorMapper {
     }
 
     /**
-     * Maps Turnkey SDK errors to RainError. Mirrors the iOS Turnkey mapping:
+     * Maps Turnkey SDK errors to RainError:
      *  - InvalidSession → TokenExpired
      *  - Config/setup-style errors (missing rpId, missing config param, client not initialized,
      *    invalid parameter / message / refresh TTL / response, OAuth state mismatch, key already

@@ -15,13 +15,12 @@ import org.junit.Test
 
 /**
  * Manager-contract tests for balance APIs — validation, mode guards, and routing
- * through the active [WalletProvider]. Provider-specific success paths live in the
- * existing `PortalWalletProviderTest` / `TurnkeyWalletProviderTest`.
+ * through the active [WalletProvider]. Provider-specific success paths live in
+ * `PortalWalletProviderTest` / `TurnkeyWalletProviderTest`.
  *
- * Mirrors iOS's `BalanceTests.swift` (manager-contract section), adjusted for Android:
- * the manager throws [RainError.SdkNotInitialized] when un-initialized (iOS distinguishes
- * `walletUnavailable`, but Android collapses both into `SdkNotInitialized` via the
- * `walletProvider ?: throw SdkNotInitialized()` guard).
+ * Note: an un-initialized manager surfaces every balance call as
+ * [RainError.SdkNotInitialized] (via the `walletProvider ?: throw SdkNotInitialized()`
+ * guard), not as `WalletUnavailable`.
  */
 class RainSdkManagerBalanceTest {
 

@@ -9,8 +9,6 @@ import com.rain.sdk.models.RainTransactionResult
  * configured values so tests can verify `RainSdkManager` routes to the active
  * `WalletProvider` and surfaces its result, independent of Portal- or
  * Turnkey-specific behavior.
- *
- * Mirrors iOS's `StubWalletProvider.swift`.
  */
 internal open class StubWalletProvider : WalletProvider {
 

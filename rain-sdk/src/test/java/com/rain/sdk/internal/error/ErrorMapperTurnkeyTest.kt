@@ -6,9 +6,10 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * Turnkey-error classification tests for [ErrorMapper].
- *
- * Mirrors the Turnkey-specific cases from iOS's `ErrorMappingTests.swift`.
+ * Turnkey-error classification tests for [ErrorMapper] — covers each `TurnkeyKotlinError`
+ * variant the mapper routes (InvalidSession, InvalidParameter, ClientNotInitialized,
+ * FailedToSignRawPayload, FailedToCreateWallet) and the wrapper-recurse paths through
+ * `mapSigningError` / `mapTransactionError`.
  *
  * Gated on JDK 24+ because Turnkey's published AAR is compiled to major class version 68
  * (Java 24). See [com.rain.sdk.internal.core.RainSdkManagerTurnkeyTest] for the same pattern.

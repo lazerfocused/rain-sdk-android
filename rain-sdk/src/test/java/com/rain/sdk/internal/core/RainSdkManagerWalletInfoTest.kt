@@ -18,10 +18,8 @@ import org.junit.Test
 
 /**
  * Manager-contract tests for wallet-info APIs — covers `getAddress` and `getTransactions`.
- *
- * Mirrors iOS's `WalletInformationTests.swift` for the parts that don't depend on the
- * Bitmap subsystem. (`generateAddressQRCode` returns an Android `Bitmap`, which requires
- * the Android runtime — that test belongs in `androidTest` rather than pure-JVM `test`.)
+ * `generateAddressQRCode` is excluded here because it returns an Android `Bitmap`, which
+ * requires the Android runtime — that case belongs in `androidTest`, not pure-JVM `test`.
  */
 class RainSdkManagerWalletInfoTest {
 

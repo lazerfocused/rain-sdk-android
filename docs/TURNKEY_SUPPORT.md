@@ -20,7 +20,7 @@ com.turnkey:types:1.0.2
 
 ## Architectural split
 
-Rain SDK's public Turnkey surface is exactly one entry point: `RainClient.initializeTurnkey(turnkey, rpcEndpoints, chainId, walletAddress)`. Everything *before* that call — `TurnkeyContext.initSuspend`, OTP/passkey/OAuth flows, sub-org provisioning, wallet creation — is host-app code, written against Turnkey's own Kotlin SDK. This mirrors the iOS Rain SDK and keeps Rain free of Turnkey's auth-UI surface.
+Rain SDK's public Turnkey surface is exactly one entry point: `RainClient.initializeTurnkey(turnkey, rpcEndpoints, chainId, walletAddress)`. Everything *before* that call — `TurnkeyContext.initSuspend`, OTP/passkey/OAuth flows, sub-org provisioning, wallet creation — is host-app code, written against Turnkey's own Kotlin SDK. This split keeps Rain free of Turnkey's auth-UI surface.
 
 | Layer | Who owns it | Examples |
 |---|---|---|

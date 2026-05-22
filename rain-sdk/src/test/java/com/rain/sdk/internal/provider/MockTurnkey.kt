@@ -38,8 +38,8 @@ internal class MockTurnkeyClient(
 ) : TurnkeyClientProtocol {
 
     /**
-     * Status response fixture for `getSendTransactionStatus`. Mirrors iOS's `StatusFixture`.
-     * Use the factory methods on the companion object to produce typical results.
+     * Status response fixture for `getSendTransactionStatus`. Use the factory methods on
+     * the companion object to produce typical results (broadcasted / pending / failed).
      */
     data class StatusFixture(
         val txHash: String? = null,
