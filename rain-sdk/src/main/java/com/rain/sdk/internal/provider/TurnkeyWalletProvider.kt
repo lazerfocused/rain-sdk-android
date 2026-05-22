@@ -23,6 +23,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import org.web3j.abi.FunctionEncoder
 import org.web3j.abi.TypeReference
@@ -47,7 +48,8 @@ internal class TurnkeyWalletProvider(
     private val turnkey: TurnkeyContextProtocol,
     private val rpcEndpoints: Map<Int, String>,
     private val walletAddressOverride: String? = null,
-    private val httpClient: OkHttpClient = OkHttpClient()
+    private val httpClient: OkHttpClient = OkHttpClient(),
+    private val pollingIntervalMs: Long = POLLING_INTERVAL_MS
 ) : WalletProvider {
 
     private companion object {
@@ -442,7 +444,7 @@ internal class TurnkeyWalletProvider(
             }
 
             if (attempt + 1 < DEFAULT_POLLING_ATTEMPTS) {
-                delay(POLLING_INTERVAL_MS)
+                delay(pollingIntervalMs)
             }
         }
         throw RainError.InternalError("Turnkey transaction status polling timed out")
@@ -478,7 +480,15 @@ internal class TurnkeyWalletProvider(
             throw RainError.NetworkError(message = "RPC request failed for $method", cause = e)
         }
 
-        val response = JSONObject(raw)
+        // Empty or non-JSON bodies happen when the connection drops mid-response or a
+        // proxy strips the payload — treat them as a network failure rather than letting
+        // a raw JSONException leak to the caller.
+        val response = try {
+            JSONObject(raw)
+        } catch (e: JSONException) {
+            Timber.e(e, "Rain SDK: Turnkey RPC returned non-JSON body for $method on chainId=$chainId")
+            throw RainError.NetworkError(message = "RPC request failed for $method", cause = e)
+        }
         if (response.has("error") && !response.isNull("error")) {
             val err = response.getJSONObject("error")
             val code = err.optInt("code", -1)

@@ -6,23 +6,15 @@ import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.internal.helpers.StubWalletProvider
 import com.rain.sdk.internal.helpers.TestFixtures
 import com.rain.sdk.internal.helpers.TestManagers
+import com.rain.sdk.internal.helpers.assumeJdk24
 import com.rain.sdk.models.RainTransaction
 import com.rain.sdk.models.RainTransactionOrder
 import com.rain.sdk.models.RainTransactionResult
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertThrows
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
-
-private fun assumeJdk24() {
-    val major = System.getProperty("java.version")?.substringBefore('.')?.toIntOrNull() ?: 0
-    assumeTrue(
-        "ErrorMapper transitively loads TurnkeyKotlinError (JDK 24 class). Current: $major",
-        major >= 24
-    )
-}
 
 /**
  * Manager-contract tests for wallet-info APIs — covers `getAddress` and `getTransactions`.

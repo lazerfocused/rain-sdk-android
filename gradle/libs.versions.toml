@@ -19,7 +19,7 @@ portal-android = "8.0.0"
 turnkey = "1.0.2"
 web3j = "4.10.0"
 timber = "5.0.1"
-okhttp = "4.12.0"
+okhttp = "5.1.0"
 
 # -- Kotlin --
 coroutines = "1.10.2"
@@ -42,6 +42,7 @@ androidx-junit = "1.2.1"
 androidx-espresso = "3.6.1"
 mockk = "1.13.10"
 truth = "1.4.2"
+json = "20240303"
 
 [libraries]
 # -- Build Tools --
@@ -57,6 +58,7 @@ timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 okhttp-logging = { module = "com.squareup.okhttp3:logging-interceptor", version.ref = "okhttp" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
+json = { module = "org.json:json", version.ref = "json" }
 
 # -- Kotlin --
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }

@@ -6,25 +6,12 @@ import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.internal.helpers.StubWalletProvider
 import com.rain.sdk.internal.helpers.TestFixtures
 import com.rain.sdk.internal.helpers.TestManagers
+import com.rain.sdk.internal.helpers.assumeJdk24
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertThrows
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
-
-/**
- * Tests that route a non-RainError through `errorMapper.mapTransactionError(e)` trigger
- * loading of `TurnkeyKotlinError` (the `is TurnkeyKotlinError` bytecode). Skip on
- * pre-JDK-24 to mirror the existing Turnkey-test gating.
- */
-private fun assumeJdk24() {
-    val major = System.getProperty("java.version")?.substringBefore('.')?.toIntOrNull() ?: 0
-    assumeTrue(
-        "ErrorMapper transitively loads TurnkeyKotlinError (JDK 24 class). Current: $major",
-        major >= 24
-    )
-}
 
 /**
  * Manager-contract tests for balance APIs — validation, mode guards, and routing

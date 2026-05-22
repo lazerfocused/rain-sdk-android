@@ -3,13 +3,13 @@ package com.rain.sdk.internal.core
 import android.webkit.URLUtil
 import com.google.common.truth.Truth.assertThat
 import com.rain.sdk.internal.config.RainConfig
+import com.rain.sdk.internal.helpers.assumeJdk24
 import com.rain.sdk.internal.network.Web3jProvider
 import io.mockk.every
 import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import kotlinx.coroutines.runBlocking
 import org.junit.After
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import java.math.BigInteger
@@ -35,11 +35,7 @@ class RainSdkManagerTurnkeyTest {
 
     @Before
     fun setUpAndGate() {
-        val major = System.getProperty("java.version")?.substringBefore('.')?.toIntOrNull() ?: 0
-        assumeTrue(
-            "Turnkey SDK requires JDK 24+ at test runtime (current: $major)",
-            major >= 24
-        )
+        assumeJdk24()
 
         RainConfig.reset()
         Web3jProvider.shutDownAll()
