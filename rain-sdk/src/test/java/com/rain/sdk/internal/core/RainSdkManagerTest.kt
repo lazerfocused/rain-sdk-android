@@ -126,7 +126,7 @@ class RainSdkManagerTest {
     assertThat(address).isEqualTo(expectedAddress)
   }
 
-  // ---- additional init edge cases (mirrors iOS RainSDKInitializationTests) ----
+  // ---- additional init edge cases ----
 
   @Test
   fun `isInitialized starts false on a fresh manager`() {

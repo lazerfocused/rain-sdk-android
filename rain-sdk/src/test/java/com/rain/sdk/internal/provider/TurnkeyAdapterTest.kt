@@ -13,10 +13,10 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * Adapter-level tests for [TurnkeyWalletProvider]. Mirrors iOS's `TurnkeyAdapterTests.swift`
- * for the parts not already covered by [TurnkeyWalletProviderTest]: polling status transitions
- * (failure / pending → broadcasted), RPC fee estimation, network-failure mapping, and
- * session/client resolution edge cases.
+ * Adapter-level tests for [TurnkeyWalletProvider] covering the RPC-bound paths not exercised
+ * by [TurnkeyWalletProviderTest]: polling status transitions (failure / pending →
+ * broadcasted), RPC fee estimation, network-failure mapping, and session/client resolution
+ * edge cases.
  *
  * Gated on JDK 24+ because the Turnkey AAR is compiled to major class version 68 — see
  * [com.rain.sdk.internal.core.RainSdkManagerTurnkeyTest] for the same pattern. The whole

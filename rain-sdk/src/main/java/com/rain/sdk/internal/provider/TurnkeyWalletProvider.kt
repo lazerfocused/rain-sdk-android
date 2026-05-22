@@ -41,8 +41,6 @@ import java.util.TimeZone
 /**
  * Turnkey-based implementation of [WalletProvider].
  * Used when the SDK is initialized with `initializeTurnkey(...)`.
- *
- * Port of iOS's `TurnkeyWalletProviderAdapter.swift`.
  */
 internal class TurnkeyWalletProvider(
     private val turnkey: TurnkeyContextProtocol,
@@ -495,8 +493,8 @@ internal class TurnkeyWalletProvider(
             val message = err.optString("message", "Unknown RPC error")
 
             // Ethereum JSON-RPC nodes return "execution reverted" (typically with code -32000
-            // or 3) for contract reverts. Mirror iOS's mapPortalRpcError which surfaces this
-            // as withdrawalRevertedByNetwork.
+            // or 3) for contract reverts. Surface this as WithdrawalRevertedByNetwork so
+            // callers can distinguish a network-side revert from a generic RPC error.
             if (message.contains("revert", ignoreCase = true)) {
                 throw RainError.WithdrawalRevertedByNetwork(
                     details = "Withdrawal reverted by the network: $message"
@@ -521,8 +519,9 @@ internal class TurnkeyWalletProvider(
         data: String,
         value: String
     ): Map<String, String> {
-        // iOS uses empty string for "no data", Android uses "0x" (see WalletProvider).
-        // Skip either representation so eth_estimateGas params match iOS for native transfers.
+        // Native transfers carry no calldata. Omit the "data" field entirely (rather than
+        // sending "0x" or "") so eth_estimateGas matches the request shape RPC nodes expect
+        // for a value-only transfer.
         val tx = mutableMapOf("from" to from, "to" to to, "value" to value)
         if (data.isNotEmpty() && data != "0x") tx["data"] = data
         return tx
@@ -579,7 +578,8 @@ internal class TurnkeyWalletProvider(
     }
 
     private fun normalizeHexComponent(value: String, length: Int): String {
-        // Match iOS exactly: remove all "0x" occurrences, not just a leading prefix.
+        // Strip every "0x" occurrence (not just a leading prefix) — Turnkey occasionally
+        // returns components like "0x...0x..." that need full normalization before padding.
         val clean = value.lowercase().replace("0x", "")
         return if (clean.length >= length) clean.takeLast(length)
         else clean.padStart(length, '0')

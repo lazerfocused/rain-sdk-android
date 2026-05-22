@@ -15,9 +15,8 @@ import org.junit.Test
 
 /**
  * Manager-contract tests for send APIs — validation, mode guards, error wrapping.
- * Provider-specific success paths live in `PortalWalletProviderTest` / `TurnkeyWalletProviderTest`.
- *
- * Mirrors iOS's `SendTokenTests.swift` (manager-contract section).
+ * Provider-specific success paths live in `PortalWalletProviderTest` /
+ * `TurnkeyWalletProviderTest`.
  */
 class RainSdkManagerSendTokenTest {
 

@@ -16,8 +16,9 @@ import java.math.BigInteger
 import java.util.Base64
 
 /**
- * Integration coverage for the Turnkey path through `RainSdkManager`, mirroring iOS's
- * `testBuildTransactionParamForWithdrawAssetTurnkey`.
+ * Integration coverage for the Turnkey path through `RainSdkManager` — drives
+ * `initializeTurnkey` + `withdrawCollateral` end-to-end against a mock TurnkeyContext to
+ * assert the EIP-712 payload is signed via `signRawPayload` with the correct encoding.
  *
  * Gated on JDK 24+ because Turnkey's published AAR is compiled against major class version 68.
  *

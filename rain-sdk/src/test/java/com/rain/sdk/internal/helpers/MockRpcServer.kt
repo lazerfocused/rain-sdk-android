@@ -11,9 +11,9 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Thin wrapper around [MockWebServer] that dispatches JSON-RPC requests by `method` name.
  *
- * Mirrors iOS's `MockURLProtocol.swift`: tests register per-method stubs (either a result
- * value or an `IOException`-style error), and the server replies accordingly. Records every
- * RPC method that's been called so tests can assert which calls were made and in what order.
+ * Tests register per-method stubs (a result value or a forced network failure) and the
+ * server replies accordingly. Records every RPC method that has been called so tests can
+ * assert which calls were made and in what order.
  *
  * Usage:
  * ```

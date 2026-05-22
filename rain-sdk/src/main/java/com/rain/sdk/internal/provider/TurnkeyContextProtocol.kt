@@ -18,8 +18,9 @@ import com.turnkey.types.V1SignRawPayloadResult
 
 /**
  * Narrow internal abstractions over the Turnkey Kotlin SDK so the wallet provider can be
- * unit-tested without standing up a real `TurnkeyContext` singleton. Mirrors iOS's
- * `TurnkeyContextProtocol` / `TurnkeyClientProtocol` testability split.
+ * unit-tested without standing up a real `TurnkeyContext` singleton. The split is
+ * deliberately small: only the methods the provider actually invokes are exposed here, so
+ * tests can mock them without re-stating Turnkey's full surface area.
  */
 internal interface TurnkeyClientProtocol {
     suspend fun getWalletAddressBalances(

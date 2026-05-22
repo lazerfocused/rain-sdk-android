@@ -28,12 +28,9 @@ import java.util.concurrent.CompletableFuture
 
 /**
  * Tests for the transaction-building primitives behind `withdrawCollateral`: nonce read,
- * EIP-712 message generation, and withdraw calldata encoding.
- *
- * Mirrors iOS's `TransactionBuildingTests.swift`. Some iOS coverage doesn't apply directly:
- * the iOS suite tests a `RainSDKManager.buildEIP712Message(...)` facade and a wallet-agnostic
- * `initialize(...)` mode; Android exposes the same primitives via `RainTransactionBuilderImpl`
- * and does not have a "wallet-agnostic" init, so tests drive the builder directly.
+ * EIP-712 message generation, and withdraw calldata encoding. Drives
+ * [RainTransactionBuilderImpl] directly rather than going through `RainSdkManager`, since
+ * the builder is wallet-provider-agnostic.
  */
 class TransactionBuildingTest {
 

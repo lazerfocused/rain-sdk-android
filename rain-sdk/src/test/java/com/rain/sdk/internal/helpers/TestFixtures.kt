@@ -22,9 +22,8 @@ internal fun assumeJdk24() {
 }
 
 /**
- * Shared test fixtures mirroring iOS's `TestFixtures.swift`.
- * Provides canonical addresses, salts, and signatures so manager-contract
- * tests don't need to invent valid bytes themselves.
+ * Shared test fixtures: canonical addresses, salts, and signatures so manager-contract
+ * tests don't have to invent valid bytes themselves.
  */
 internal object TestFixtures {
     const val WALLET_ADDRESS = "0x1234567890123456789012345678901234567890"
@@ -43,10 +42,10 @@ internal object TestFixtures {
 }
 
 /**
- * Manager factories matching iOS's `TestManagers`.
+ * Manager factories for tests.
  *
  * Uses [RainSdkManager.setWalletProviderForTest] (a `@VisibleForTesting` seam) to inject
- * a fake provider, mirroring iOS's public `setWalletProvider(...)` API.
+ * a fake provider so tests don't have to drive `initializePortal` / `initializeTurnkey`.
  */
 internal object TestManagers {
 

@@ -61,11 +61,10 @@ internal class RainSdkManager(
 
   /**
    * Installs a fake [WalletProvider] without going through `initializePortal` /
-   * `initializeTurnkey`. Mirrors iOS's public `setWalletProvider`, but kept internal +
-   * `@VisibleForTesting` because Android consumers don't drive provider swaps directly.
-   * Reflection-based injection is the alternative — but `Class.getDeclaredField()`
-   * eagerly resolves every field's declared type, which forces loading of `TurnkeyContext`
-   * (JDK 24 class) on pre-JDK-24 test JVMs.
+   * `initializeTurnkey`. Internal + `@VisibleForTesting` because consumers don't drive
+   * provider swaps directly. Reflection-based injection is the alternative — but
+   * `Class.getDeclaredField()` eagerly resolves every field's declared type, which forces
+   * loading of `TurnkeyContext` (JDK 24 class) on pre-JDK-24 test JVMs.
    */
   @androidx.annotation.VisibleForTesting
   internal fun setWalletProviderForTest(provider: WalletProvider?) {
