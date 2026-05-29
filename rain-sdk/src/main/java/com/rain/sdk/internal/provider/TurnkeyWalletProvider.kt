@@ -1,7 +1,14 @@
 package com.rain.sdk.internal.provider
 
 import com.rain.sdk.interfaces.RainClient
+import com.rain.sdk.internal.constants.RainConstants
+import com.rain.sdk.internal.constants.TokenRegistry
 import com.rain.sdk.internal.error.RainError
+import com.rain.sdk.internal.network.chainreader.ChainReader
+import com.rain.sdk.internal.network.chainreader.EvmChainReader
+import com.rain.sdk.internal.network.chainreader.JsonRpcClient
+import com.rain.sdk.internal.utils.ChainIdFormat
+import com.rain.sdk.internal.utils.strippingHexPrefix
 import com.rain.sdk.models.RainTransaction
 import com.rain.sdk.models.RainTransactionOrder
 import com.rain.sdk.models.RainTransactionResult
@@ -17,22 +24,15 @@ import com.turnkey.types.V1HashFunction
 import com.turnkey.types.V1Pagination
 import com.turnkey.types.V1PayloadEncoding
 import com.turnkey.types.V1SignRawPayloadResult
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
-import org.json.JSONException
-import org.json.JSONObject
 import org.web3j.abi.FunctionEncoder
 import org.web3j.abi.TypeReference
 import org.web3j.abi.datatypes.Address
 import org.web3j.abi.datatypes.Function as Web3jFunction
 import org.web3j.abi.datatypes.generated.Uint256
-import timber.log.Timber
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.text.SimpleDateFormat
@@ -41,23 +41,39 @@ import java.util.Locale
 import java.util.TimeZone
 
 /**
- * Turnkey-based implementation of [WalletProvider].
- * Used when the SDK is initialized with `initializeTurnkey(...)`.
+ * Turnkey-based implementation of [WalletProvider]. Used when the SDK is initialized with
+ * `initializeTurnkey(...)`.
+ *
+ * Balance reads route through Turnkey's `get_wallet_address_balances` when the chain is in
+ * [RainConstants.TURNKEY_SUPPORTED_CHAINS]; everything else falls through to the injected
+ * [ChainReader] (parallel `eth_call` + Multicall3 where deployed).
  */
 internal class TurnkeyWalletProvider(
     private val turnkey: TurnkeyContextProtocol,
     private val rpcEndpoints: Map<Int, String>,
     private val walletAddressOverride: String? = null,
     private val httpClient: OkHttpClient = OkHttpClient(),
-    private val pollingIntervalMs: Long = POLLING_INTERVAL_MS
+    private val pollingIntervalMs: Long = POLLING_INTERVAL_MS,
+    jsonRpcClient: JsonRpcClient = JsonRpcClient(httpClient),
+    chainReader: ChainReader? = null
 ) : WalletProvider {
+
+    private val jsonRpcClient: JsonRpcClient = jsonRpcClient
+    private val chainReader: ChainReader = chainReader
+        ?: EvmChainReader(rpcEndpoints = rpcEndpoints, jsonRpcClient = jsonRpcClient)
+
+    // Once resolved, the wallet address is stable for the provider's lifetime, so cache
+    // it. Mutex (rather than synchronized) so the suspend-friendly address() doesn't block
+    // a thread while it's waiting on Turnkey's refresh.
+    private val cachedAddressLock = Mutex()
+    @Volatile
+    private var cachedAddress: String? = null
 
     private companion object {
         const val DEFAULT_NATIVE_DECIMALS = 18
         const val DEFAULT_POLLING_ATTEMPTS = 30
         const val POLLING_INTERVAL_MS = 1_000L
         const val FALLBACK_GAS_LIMIT = 21_000L
-        const val JSON_MEDIA_TYPE = "application/json"
     }
 
     private data class ActivityDraft(
@@ -71,17 +87,27 @@ internal class TurnkeyWalletProvider(
         val sendTransactionStatusId: String?
     )
 
+    /** True when Turnkey's `get-balances` API covers [chainId]. */
+    private fun usesTurnkeyForBalances(chainId: Int): Boolean =
+        chainId in RainConstants.TURNKEY_SUPPORTED_CHAINS
+
     // ---------- address ----------
 
     override suspend fun getAddress(): String {
         walletAddressOverride?.takeIf { it.isNotEmpty() }?.let { return it }
 
-        resolveEthereumWalletAddress(turnkey.wallets)?.let { return it }
+        cachedAddress?.let { return it }
 
-        turnkey.refreshWallets()
+        return cachedAddressLock.withLock {
+            cachedAddress?.let { return@withLock it }
 
-        return resolveEthereumWalletAddress(turnkey.wallets)
-            ?: throw RainError.WalletUnavailable("No Ethereum wallet available from Turnkey context")
+            resolveEthereumWalletAddress(turnkey.wallets)?.also { cachedAddress = it }
+                ?: run {
+                    turnkey.refreshWallets()
+                    resolveEthereumWalletAddress(turnkey.wallets)?.also { cachedAddress = it }
+                        ?: throw RainError.WalletUnavailable("No Ethereum wallet available from Turnkey context")
+                }
+        }
     }
 
     private fun resolveEthereumWalletAddress(wallets: List<com.turnkey.core.models.Wallet>): String? {
@@ -179,25 +205,19 @@ internal class TurnkeyWalletProvider(
         data: String,
         value: String
     ): Double {
-        val estimateHex = extractHexResult(
-            rpcRequest(
-                chainId = chainId,
-                method = "eth_estimateGas",
-                params = listOf(rpcTransactionObject(from, to, data, value))
-            ),
-            "eth_estimateGas"
+        val estimateHex = rpcCallForHex(
+            chainId = chainId,
+            method = "eth_estimateGas",
+            params = listOf(rpcTransactionObject(from, to, data, value))
         )
-        val gasPriceHex = extractHexResult(
-            rpcRequest(
-                chainId = chainId,
-                method = "eth_gasPrice",
-                params = emptyList<Any>()
-            ),
-            "eth_gasPrice"
+        val gasPriceHex = rpcCallForHex(
+            chainId = chainId,
+            method = "eth_gasPrice",
+            params = emptyList()
         )
 
-        val gasLimit = BigInteger(estimateHex.removePrefix("0x").ifEmpty { "0" }, 16)
-        val gasPrice = BigInteger(gasPriceHex.removePrefix("0x").ifEmpty { "0" }, 16)
+        val gasLimit = BigInteger(estimateHex.strippingHexPrefix().ifEmpty { "0" }, 16)
+        val gasPrice = BigInteger(gasPriceHex.strippingHexPrefix().ifEmpty { "0" }, 16)
         return EthereumConverter.convertWeiToEth(gasLimit.multiply(gasPrice))
     }
 
@@ -205,26 +225,18 @@ internal class TurnkeyWalletProvider(
 
     override suspend fun getNativeBalance(chainId: Int): Double {
         val walletAddress = getAddress()
-        return try {
-            val balances = fetchBalances(chainId, walletAddress)
-            val caip2 = caip2For(chainId)
-            val native = balances.firstOrNull { isNativeAsset(it, caip2) }
-            decimalStringToDouble(
-                balance = native?.balance,
-                decimals = native?.decimals?.toInt() ?: DEFAULT_NATIVE_DECIMALS
-            )
-        } catch (e: Exception) {
-            // Turnkey's balance indexer (`/public/v1/query/get_wallet_address_balances`) only
-            // covers a curated set of chains and 403s for the rest (e.g. Avalanche Fuji 43113).
-            // Native balance is one RPC call away, so fall back to eth_getBalance over the
-            // configured RPC endpoint — works on any EVM chain we have a URL for.
-            Timber.w(e, "Rain SDK: Turnkey balance indexer failed for chainId=$chainId, using eth_getBalance fallback")
-            val hex = extractHexResult(
-                rpcRequest(chainId, "eth_getBalance", listOf(walletAddress, "latest")),
-                "eth_getBalance"
-            )
-            EthereumConverter.convertHexToDouble(hex, DEFAULT_NATIVE_DECIMALS)
+
+        if (!usesTurnkeyForBalances(chainId)) {
+            return chainReader.getNativeBalance(chainId, walletAddress)
         }
+
+        val balances = fetchBalances(chainId, walletAddress)
+        val caip2 = ChainIdFormat.EIP155.format(chainId)
+        val native = balances.firstOrNull { isNativeAsset(it, caip2) }
+        return decimalStringToDouble(
+            balance = native?.balance,
+            decimals = native?.decimals?.toInt() ?: DEFAULT_NATIVE_DECIMALS
+        )
     }
 
     override suspend fun getERC20Balance(
@@ -232,27 +244,30 @@ internal class TurnkeyWalletProvider(
         tokenAddress: String,
         decimals: Int?
     ): Double {
+        // `eth_call balanceOf` is the same operation everywhere — delegate unconditionally
+        // so the SDK has one implementation rather than per-adapter copies.
         val walletAddress = getAddress()
-        val function = Web3jFunction(
-            "balanceOf",
-            listOf(Address(walletAddress)),
-            listOf(object : TypeReference<Uint256>() {})
-        )
-        val callData = FunctionEncoder.encode(function)
-        val callParams = mapOf("to" to tokenAddress, "data" to callData)
-        val response = rpcRequest(
+        return chainReader.getERC20Balance(
             chainId = chainId,
-            method = "eth_call",
-            params = listOf(callParams, "latest")
+            tokenAddress = tokenAddress,
+            walletAddress = walletAddress,
+            decimals = decimals
         )
-        val hex = extractHexResult(response, "eth_call")
-        return EthereumConverter.convertHexToDouble(hex, decimals ?: RainClient.DEFAULT_ERC20_DECIMALS)
     }
 
     override suspend fun getERC20Balances(chainId: Int): Map<String, Double> {
         val walletAddress = getAddress()
+
+        if (!usesTurnkeyForBalances(chainId)) {
+            val tokens = TokenRegistry.tokensFor(chainId)
+            val all = chainReader.getBalances(chainId, walletAddress, tokens)
+            // This method's contract is ERC-20s only (the manager combines native +
+            // ERC-20 elsewhere), so strip the native key.
+            return all.filterKeys { it.isNotEmpty() }
+        }
+
         val balances = fetchBalances(chainId, walletAddress)
-        val caip2 = caip2For(chainId)
+        val caip2 = ChainIdFormat.EIP155.format(chainId)
 
         return balances.mapNotNull { balance ->
             val caip19 = balance.caip19 ?: return@mapNotNull null
@@ -349,7 +364,7 @@ internal class TurnkeyWalletProvider(
             TGetWalletAddressBalancesBody(
                 organizationId = session.organizationId,
                 address = walletAddress,
-                caip2 = caip2For(chainId)
+                caip2 = ChainIdFormat.EIP155.format(chainId)
             )
         )
         return response.balances.orEmpty()
@@ -363,22 +378,25 @@ internal class TurnkeyWalletProvider(
         data: String,
         value: String
     ): TEthSendTransactionBody {
-        val nonceHex = extractHexResult(
-            rpcRequest(chainId, "eth_getTransactionCount", listOf(from, "pending")),
-            "eth_getTransactionCount"
+        val nonceHex = rpcCallForHex(
+            chainId = chainId,
+            method = "eth_getTransactionCount",
+            params = listOf(from, "pending")
         )
-        val estimateGasHex = extractHexResult(
-            rpcRequest(chainId, "eth_estimateGas", listOf(rpcTransactionObject(from, to, data, value))),
-            "eth_estimateGas"
+        val estimateGasHex = rpcCallForHex(
+            chainId = chainId,
+            method = "eth_estimateGas",
+            params = listOf(rpcTransactionObject(from, to, data, value))
         )
-        val gasPriceHex = extractHexResult(
-            rpcRequest(chainId, "eth_gasPrice", emptyList<Any>()),
-            "eth_gasPrice"
+        val gasPriceHex = rpcCallForHex(
+            chainId = chainId,
+            method = "eth_gasPrice",
+            params = emptyList()
         )
 
         val nonce = decimalStringFromHex(nonceHex)
         val estimatedGas = BigInteger(
-            estimateGasHex.removePrefix("0x").ifEmpty { "0" },
+            estimateGasHex.strippingHexPrefix().ifEmpty { "0" },
             16
         ).takeIf { it > BigInteger.ZERO } ?: BigInteger.valueOf(FALLBACK_GAS_LIMIT)
         val bufferedGas = estimatedGas.add(estimatedGas.divide(BigInteger.valueOf(5)))
@@ -387,7 +405,7 @@ internal class TurnkeyWalletProvider(
 
         return TEthSendTransactionBody(
             organizationId = session.organizationId,
-            caip2 = caip2For(chainId),
+            caip2 = ChainIdFormat.EIP155.format(chainId),
             data = data.ifEmpty { "0x" },
             from = from,
             gasLimit = gasLimit,
@@ -452,71 +470,23 @@ internal class TurnkeyWalletProvider(
 
     // ---------- RPC ----------
 
-    private suspend fun rpcRequest(
+    /**
+     * Issues a JSON-RPC call against the chain's configured RPC URL, returning the hex
+     * `result` field. Promotes [RainError.InvalidRpcUrl] to [RainError.InvalidConfig] so
+     * the caller gets the chain ID alongside the bad URL.
+     */
+    private suspend fun rpcCallForHex(
         chainId: Int,
         method: String,
         params: List<Any>
-    ): JSONObject {
+    ): String {
         val rpcUrl = rpcEndpoints[chainId]
             ?: throw RainError.InvalidConfig("No RPC endpoint configured for chainId=$chainId")
-
-        val payload = JSONObject().apply {
-            put("jsonrpc", "2.0")
-            put("id", 1)
-            put("method", method)
-            put("params", paramsToJsonArray(params))
+        return try {
+            jsonRpcClient.callForHexResult(rpcUrl, method, params)
+        } catch (e: RainError.InvalidRpcUrl) {
+            throw RainError.InvalidConfig("Invalid RPC URL for chainId=$chainId: $rpcUrl")
         }
-
-        val request = Request.Builder()
-            .url(rpcUrl)
-            .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE.toMediaTypeOrNull()))
-            .addHeader("Content-Type", JSON_MEDIA_TYPE)
-            .build()
-
-        val raw = try {
-            // okhttp's execute() is blocking — must run off the main thread to avoid
-            // NetworkOnMainThreadException when called from a UI-dispatched coroutine.
-            withContext(Dispatchers.IO) {
-                httpClient.newCall(request).execute().use { it.body?.string() ?: "{}" }
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "Rain SDK: Turnkey RPC request failed for $method on chainId=$chainId")
-            throw RainError.NetworkError(message = "RPC request failed for $method", cause = e)
-        }
-
-        // Empty or non-JSON bodies happen when the connection drops mid-response or a
-        // proxy strips the payload — treat them as a network failure rather than letting
-        // a raw JSONException leak to the caller.
-        val response = try {
-            JSONObject(raw)
-        } catch (e: JSONException) {
-            Timber.e(e, "Rain SDK: Turnkey RPC returned non-JSON body for $method on chainId=$chainId")
-            throw RainError.NetworkError(message = "RPC request failed for $method", cause = e)
-        }
-        if (response.has("error") && !response.isNull("error")) {
-            val err = response.getJSONObject("error")
-            val code = err.optInt("code", -1)
-            val message = err.optString("message", "Unknown RPC error")
-
-            // Ethereum JSON-RPC nodes return "execution reverted" (typically with code -32000
-            // or 3) for contract reverts. Surface this as WithdrawalRevertedByNetwork so
-            // callers can distinguish a network-side revert from a generic RPC error.
-            if (message.contains("revert", ignoreCase = true)) {
-                throw RainError.WithdrawalRevertedByNetwork(
-                    details = "Withdrawal reverted by the network: $message"
-                )
-            }
-            throw RainError.InternalError("RPC error [$code]: $message")
-        }
-        return response
-    }
-
-    private fun extractHexResult(response: JSONObject, method: String): String {
-        val result = response.opt("result")
-        if (result !is String) {
-            throw RainError.InternalError("Unexpected RPC result for method $method")
-        }
-        return result
     }
 
     private fun rpcTransactionObject(
@@ -533,24 +503,7 @@ internal class TurnkeyWalletProvider(
         return tx
     }
 
-    private fun paramsToJsonArray(params: List<Any>): JSONArray {
-        val array = JSONArray()
-        params.forEach { value ->
-            when (value) {
-                is Map<*, *> -> {
-                    val obj = JSONObject()
-                    value.forEach { (k, v) -> obj.put(k.toString(), v) }
-                    array.put(obj)
-                }
-                else -> array.put(value)
-            }
-        }
-        return array
-    }
-
     // ---------- formatting ----------
-
-    private fun caip2For(chainId: Int): String = "eip155:$chainId"
 
     private fun isNativeAsset(balance: V1AssetBalance, caip2: String): Boolean {
         val caip19 = balance.caip19 ?: return false
@@ -572,7 +525,7 @@ internal class TurnkeyWalletProvider(
     }
 
     private fun decimalStringFromHex(hex: String): String {
-        val cleaned = hex.removePrefix("0x").ifEmpty { "0" }
+        val cleaned = hex.strippingHexPrefix().ifEmpty { "0" }
         return BigInteger(cleaned, 16).toString()
     }
 

@@ -6,6 +6,8 @@ import io.portalhq.android.Portal
 import io.portalhq.android.mpc.data.FeatureFlags
 import io.portalhq.android.provider.data.EthTransactionParam
 import io.portalhq.android.utils.events.PortalEvents
+import com.rain.sdk.internal.provider.toHexString
+import com.rain.sdk.internal.provider.toTransactionHash
 import com.rain.sdk.utils.EthereumConverter
 import com.rain.sdk.models.RainTransaction
 import com.rain.sdk.models.RainTransactionOrder
@@ -152,7 +154,7 @@ internal class PortalManager {
       method = PortalRequestMethod.eth_getBalance,
       params = listOf(walletAddress, "latest")
     )
-    val hex = EthereumConverter.convertPortalResultToHexString(result)
+    val hex = result.toHexString()
     return EthereumConverter.convertWeiHexToEth(hex)
   }
 
@@ -187,7 +189,7 @@ internal class PortalManager {
         method = PortalRequestMethod.eth_call,
         params = listOf(callParams, "latest")
       )
-      val hex = EthereumConverter.convertPortalResultToHexString(result)
+      val hex = result.toHexString()
       EthereumConverter.convertHexToDouble(hex, decimals ?: RainClient.DEFAULT_ERC20_DECIMALS)
     } catch (e: Exception) {
       if (e is CancellationException) throw e
@@ -208,11 +210,13 @@ internal class PortalManager {
 
     return try {
       val response = portal.api.getAssets(eip155ChainId).getOrThrow()
-      response.tokenBalances.associate {
-        //TODO: will update after clarify with portal team
-        (null ?: "") to (it.balance?.toDoubleOrNull() ?: 0.0)
-//        (it.contractAddress ?: "") to (it.balance?.toDoubleOrNull() ?: 0.0)
-      }.filterKeys { it.isNotEmpty() }
+      // Portal's TokenBalance exposes the contract address inside the untyped
+      // `metadata` map under "tokenAddress" (iOS reads the same field via
+      // metadata.tokenAddress). `balance` is already a decimal string.
+      response.tokenBalances.mapNotNull { token ->
+        val contractAddress = token.metadata["tokenAddress"] as? String
+        contractAddress?.let { it to (token.balance.toDoubleOrNull() ?: 0.0) }
+      }.toMap()
     } catch (e: Exception) {
       if (e is CancellationException) throw e
       Timber.e(e, "Rain SDK: Failed to get ERC20 balances for chainId=$chainId")
@@ -346,11 +350,23 @@ internal class PortalManager {
     )
 
     val (gasHex, gasPriceHex) = coroutineScope {
-      val gasLimitDeferred = async { portal.ethEstimateGas(eip155ChainId, ethParams) }
-      val gasPriceDeferred = async { portal.ethGasPrice(eip155ChainId) }
+      val gasLimitDeferred = async {
+        portal.request(
+          chainId = eip155ChainId,
+          method = PortalRequestMethod.eth_estimateGas,
+          params = listOf(ethParams)
+        )
+      }
+      val gasPriceDeferred = async {
+        portal.request(
+          chainId = eip155ChainId,
+          method = PortalRequestMethod.eth_gasPrice,
+          params = listOf()
+        )
+      }
 
-      val gasHex = EthereumConverter.convertPortalResultToHexString(gasLimitDeferred.await())
-      val gasPriceHex = EthereumConverter.convertPortalResultToHexString(gasPriceDeferred.await())
+      val gasHex = gasLimitDeferred.await().toHexString()
+      val gasPriceHex = gasPriceDeferred.await().toHexString()
       Pair(gasHex, gasPriceHex)
     }
 
@@ -414,10 +430,12 @@ internal class PortalManager {
       nonce = null
     )
 
-    val result = portal.ethSendTransaction(eip155ChainId, params)
-    val txHash = EthereumConverter.convertPortalResultToTransactionHash(result)
-
-    return txHash
+    val result = portal.request(
+      chainId = eip155ChainId,
+      method = PortalRequestMethod.eth_sendTransaction,
+      params = listOf(params)
+    )
+    return result.toTransactionHash()
   }
 
   /**
@@ -467,7 +485,7 @@ internal class PortalManager {
         method = PortalRequestMethod.eth_call,
         params = listOf(callParams, "latest")
       )
-      val hex = EthereumConverter.convertPortalResultToHexString(result)
+      val hex = result.toHexString()
       hex.removePrefix("0x").toBigInteger(16).toInt()
     } catch (e: Exception) {
       Timber.w(e, "Rain SDK: Failed to fetch decimals for contract=$contractAddress")
@@ -507,7 +525,7 @@ internal class PortalManager {
         method = PortalRequestMethod.eth_call,
         params = listOf(callParams, "latest")
       )
-      val hex = EthereumConverter.convertPortalResultToHexString(result)
+      val hex = result.toHexString()
       if (hex.length > 2) {
         val decoded = org.web3j.abi.FunctionReturnDecoder.decode(hex, function.outputParameters)
         if (decoded.isNotEmpty()) {
