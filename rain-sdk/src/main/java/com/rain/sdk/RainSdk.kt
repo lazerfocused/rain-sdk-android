@@ -103,16 +103,17 @@ class RainSdk private constructor(
         
         /**
          * Resets the SDK instance.
-         * 
-         * This clears all configuration and re-initializes the singleton.
-         * Use for testing or when reinitializing the SDK.
-         * 
-         * @internal For testing purposes only
+         *
+         * Clears wallet provider state, drops the cached Portal/Turnkey contexts, and
+         * forgets the singleton so the next [getInstance] call rebuilds it fresh.
+         * Idempotent — safe to call when the SDK was never initialized.
          */
-        @VisibleForTesting
         fun reset() {
             synchronized(lock) {
+                runCatching { instance?.client?.reset() }
                 instance = null
+                // The manager's reset already cleared the RainConfig singleton's contents;
+                // null the singleton too so a fresh getInstance() call rebuilds it.
                 RainConfig.reset()
             }
         }

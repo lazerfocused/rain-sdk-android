@@ -199,6 +199,28 @@ interface RainClient {
     suspend fun getBalances(chainId: Int): Map<String, Double>
 
     /**
+     * Fetches balances across every chain the SDK was initialized with, in parallel.
+     *
+     * Per-chain failures are tolerated — a chain that errors out is returned as an empty
+     * map rather than failing the whole call, so a single bad RPC endpoint doesn't hide
+     * balances on the other chains. Callers can detect missing chains by checking for
+     * empty inner maps.
+     *
+     * @return Map keyed by chain ID, mapping to per-chain balances in the same shape as
+     *         [getBalances]. Native balance is stored under the empty-string key.
+     * @throws RainError if the SDK was not initialized or no wallet provider is set.
+     */
+    @Throws(RainError::class)
+    suspend fun getAllBalances(): Map<Int, Map<String, Double>>
+
+    /**
+     * Clears all SDK state — wallet provider, Portal/Turnkey contexts, and stored chain
+     * configuration. After this returns, the SDK is back to the same state as immediately
+     * after construction and must be re-initialized before further use. Idempotent.
+     */
+    fun reset()
+
+    /**
      * Generates an Android Bitmap containing a QR code for a wallet address.
      * 
      * @param address Optional address to generate the QR code for. If null, the configured provider's wallet address will be retrieved and used.

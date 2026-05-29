@@ -1,5 +1,6 @@
 package com.rain.sdk.internal.core
 
+import com.rain.sdk.internal.config.RainConfig
 import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.interfaces.RainClient
 import com.rain.sdk.internal.error.ErrorMapper
@@ -25,6 +26,9 @@ import io.portalhq.android.mpc.data.FeatureFlags
 import timber.log.Timber
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.math.BigInteger
 import android.graphics.Bitmap
@@ -60,6 +64,14 @@ internal class RainSdkManager(
   private var turnkeyContext: TurnkeyContext? = null
 
   /**
+   * Snapshot of the chain IDs the SDK was last initialized with. Populated from the
+   * `rpcEndpoints` map in `initializePortal` / `initializeTurnkey` and used by
+   * `getAllBalances` to fan out across every configured chain.
+   */
+  @Volatile
+  private var configuredChainIds: List<Int> = emptyList()
+
+  /**
    * Installs a fake [WalletProvider] without going through `initializePortal` /
    * `initializeTurnkey`. Internal + `@VisibleForTesting` because consumers don't drive
    * provider swaps directly. Reflection-based injection is the alternative — but
@@ -69,6 +81,16 @@ internal class RainSdkManager(
   @androidx.annotation.VisibleForTesting
   internal fun setWalletProviderForTest(provider: WalletProvider?) {
     walletProvider = provider
+  }
+
+  /**
+   * Test seam for installing a `configuredChainIds` snapshot without driving
+   * `initializePortal` / `initializeTurnkey`. Used by `getAllBalances` to fan out over
+   * the chains the SDK was initialized with.
+   */
+  @androidx.annotation.VisibleForTesting
+  internal fun setConfiguredChainIdsForTest(chainIds: List<Int>) {
+    configuredChainIds = chainIds
   }
 
   private val signer = TransactionSigner({ walletProvider }, errorMapper)
@@ -117,6 +139,8 @@ internal class RainSdkManager(
         turnkeyContext = null
       }
 
+      configuredChainIds = rpcEndpoints.keys.toList()
+
       // Mark SDK as initialized
       configManager.markInitialized()
 
@@ -155,6 +179,7 @@ internal class RainSdkManager(
 
       walletProvider = provider
       turnkeyContext = turnkey
+      configuredChainIds = rpcEndpoints.keys.toList()
       // Turnkey path doesn't use Portal — make sure stale state is cleared.
       portalManager.destroy()
 
@@ -337,6 +362,53 @@ internal class RainSdkManager(
       Timber.e(e, "Rain SDK: Failed to get balances")
       throw errorMapper.mapTransactionError(e)
     }
+  }
+
+  override suspend fun getAllBalances(): Map<Int, Map<String, Double>> {
+    if (!isInitialized) throw RainError.SdkNotInitialized()
+    val provider = walletProvider ?: throw RainError.SdkNotInitialized()
+    val chainIds = configuredChainIds
+    if (chainIds.isEmpty()) return emptyMap()
+
+    // Fan out across chains in parallel; within each chain, native and ERC-20 reads are
+    // fetched in parallel and their failures are independent — a single failure surfaces
+    // as a partial result, and a chain with both sides failing comes back as an empty map
+    // so a single bad RPC doesn't sink the whole call.
+    return coroutineScope {
+      chainIds.map { chainId ->
+        async {
+          val erc20Deferred = async {
+            runCatching { provider.getERC20Balances(chainId) }.getOrElse { e ->
+              if (e is CancellationException) throw e
+              Timber.w(e, "Rain SDK: getAllBalances erc20 failed for chainId=$chainId")
+              emptyMap()
+            }
+          }
+          val nativeDeferred = async {
+            runCatching { provider.getNativeBalance(chainId) }.getOrElse { e ->
+              if (e is CancellationException) throw e
+              Timber.w(e, "Rain SDK: getAllBalances native failed for chainId=$chainId")
+              null
+            }
+          }
+          val combined = erc20Deferred.await().toMutableMap()
+          nativeDeferred.await()?.let { combined[""] = it }
+          chainId to combined.toMap()
+        }
+      }.awaitAll().toMap()
+    }
+  }
+
+  override fun reset() {
+    walletProvider = null
+    turnkeyContext = null
+    configuredChainIds = emptyList()
+    portalManager.destroy()
+    // Clear the existing RainConfig instance rather than nulling the singleton —
+    // `ConfigManager` holds a captured reference and would otherwise see a stale config
+    // after a subsequent re-initialization.
+    RainConfig.getInstance().clear()
+    Timber.d("Rain SDK: Reset SDK state")
   }
 
   override suspend fun generateAddressQRCode(address: String?, width: Int, height: Int): Bitmap {

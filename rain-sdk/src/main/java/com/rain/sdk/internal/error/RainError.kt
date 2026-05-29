@@ -6,6 +6,7 @@ package com.rain.sdk.internal.error
 enum class RainErrorCode(val code: String) {
   SDK_NOT_INITIALIZED("RAIN_101"),
   INVALID_CONFIG("RAIN_102"),
+  INVALID_RPC_URL("RAIN_103"),
 
   TOKEN_EXPIRED("RAIN_201"),
   UNAUTHORIZED("RAIN_202"),
@@ -37,6 +38,10 @@ sealed class RainError(
 
   class InvalidConfig(details: String) :
     RainError(RainErrorCode.INVALID_CONFIG, "Invalid Config: $details")
+
+  /** RPC URL could not be parsed as a valid URL (no chain-ID context). */
+  class InvalidRpcUrl(rpcUrl: String) :
+    RainError(RainErrorCode.INVALID_RPC_URL, "Invalid RPC URL: $rpcUrl")
 
   // --- 2xx Authentication ---
   class TokenExpired : RainError(RainErrorCode.TOKEN_EXPIRED)
