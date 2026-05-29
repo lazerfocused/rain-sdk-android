@@ -39,7 +39,7 @@ class EvmChainReaderTest {
     // ---------- single-token paths ----------
 
     @Test
-    fun `getNativeBalance parses eth_getBalance hex into ether units`() = runBlocking {
+    fun `getNativeBalance parses eth_getBalance hex into ether units`(): Unit = runBlocking {
         // 0xDE0B6B3A7640000 = 1e18 wei = 1 ETH
         rpc.stub("eth_getBalance", "0xde0b6b3a7640000")
         val reader = makeReader(chainId = 1)
