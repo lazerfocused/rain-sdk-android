@@ -105,7 +105,7 @@ internal class TransactionCoordinator(
    * @return Estimated gas fee in the chain's native token (e.g. ETH/AVAX)
    */
   suspend fun estimateGas(
-    chainId: Int,
+    chainId: String,
     from: String,
     to: String,
     data: String

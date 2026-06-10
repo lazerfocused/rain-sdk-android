@@ -35,13 +35,13 @@ internal class TokenMetadataStore(
      * Known tokens per chain: built-in registry plus host-registered. Insertion order is
      * preserved (registry order first, then registrations) so balance reads are deterministic.
      */
-    private val knownTokens: MutableMap<Int, MutableList<TokenInfo>> =
+    private val knownTokens: MutableMap<String, MutableList<TokenInfo>> =
         TokenRegistry.tokensByChainId
             .mapValues { (_, tokens) -> tokens.toMutableList() }
             .toMutableMap()
 
     /** Tokens discovered and enriched at runtime, keyed by chain ID then lowercased address. */
-    private val enrichmentCache: MutableMap<Int, MutableMap<String, TokenInfo>> = mutableMapOf()
+    private val enrichmentCache: MutableMap<String, MutableMap<String, TokenInfo>> = mutableMapOf()
 
     init {
         seedTokens.forEach { upsert(it) }
@@ -58,19 +58,19 @@ internal class TokenMetadataStore(
     }
 
     /** Native currency for a chain (gas token metadata). Solana clusters resolve SOL. */
-    fun nativeCurrency(chainId: Int): NativeCurrency =
+    fun nativeCurrency(chainId: String): NativeCurrency =
         if (SolanaChains.isSolanaChain(chainId)) SolanaChains.NATIVE_CURRENCY
         else TokenRegistry.nativeCurrency(chainId)
 
     /** All known tokens for a chain (registry + host-registered), in deterministic order. */
-    suspend fun registeredTokens(chainId: Int): List<TokenInfo> =
+    suspend fun registeredTokens(chainId: String): List<TokenInfo> =
         mutex.withLock { knownTokens[chainId]?.toList() ?: emptyList() }
 
     /**
      * Resolves metadata for a contract token: known tokens first, then the enrichment cache,
      * then a one-time on-chain `decimals()` / `symbol()` read (cached on success).
      */
-    suspend fun tokenInfo(chainId: Int, address: String): TokenInfo {
+    suspend fun tokenInfo(chainId: String, address: String): TokenInfo {
         val key = address.lowercase()
 
         mutex.withLock {
@@ -95,7 +95,7 @@ internal class TokenMetadataStore(
      * Reads `decimals()` and `symbol()` in parallel. A failed `decimals()` falls back to the
      * default; a failed `symbol()` leaves the symbol `null`.
      */
-    private suspend fun enrich(chainId: Int, address: String): TokenInfo = coroutineScope {
+    private suspend fun enrich(chainId: String, address: String): TokenInfo = coroutineScope {
         val decimalsTask = async {
             runCatching { chainReader.getDecimals(chainId, address) }
                 .getOrElse { e ->

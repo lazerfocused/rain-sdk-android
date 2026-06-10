@@ -2,7 +2,6 @@ package com.rain.sdk.internal.core
 
 import android.webkit.URLUtil
 import com.google.common.truth.Truth.assertThat
-import com.rain.sdk.RainChain
 import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.internal.config.RainConfig
 import io.mockk.coEvery
@@ -66,7 +65,7 @@ class RainSdkManagerTest {
   fun `initializePortal succeeds with empty token but portal access fails`() {
     sdkManager.initializePortal(
       portalSessionToken = "",
-      rpcEndpoints = mapOf(RainChain.AVALANCHE_MAINNET to "https://rpc.com"),
+      rpcEndpoints = mapOf("eip155:43114" to "https://rpc.com"),
       chainId = null
     )
 
@@ -95,7 +94,7 @@ class RainSdkManagerTest {
   fun `initializePortal throws error when chainId is negative`() {
     sdkManager.initializePortal(
       portalSessionToken = "token",
-      rpcEndpoints = mapOf(-1 to "https://rpc.com"),
+      rpcEndpoints = mapOf("eip155:-1" to "https://rpc.com"),
       chainId = null
     )
   }
@@ -106,7 +105,7 @@ class RainSdkManagerTest {
 
     sdkManager.initializePortal(
       portalSessionToken = "token",
-      rpcEndpoints = mapOf(RainChain.AVALANCHE_MAINNET to "invalid-url"),
+      rpcEndpoints = mapOf("eip155:43114" to "invalid-url"),
       chainId = null
     )
   }
@@ -118,7 +117,7 @@ class RainSdkManagerTest {
 
     sdkManager.initializePortal(
       portalSessionToken = "valid-token",
-      rpcEndpoints = mapOf(RainChain.AVALANCHE_MAINNET to "https://rpc.com"),
+      rpcEndpoints = mapOf("eip155:43114" to "https://rpc.com"),
       chainId = null
     )
 
@@ -151,11 +150,11 @@ class RainSdkManagerTest {
     sdkManager.initializePortal(
       portalSessionToken = "token",
       rpcEndpoints = mapOf(
-        RainChain.AVALANCHE_MAINNET to "https://avax.rpc",
-        1 to "https://eth.rpc",
-        137 to "https://polygon.rpc"
+        "eip155:43114" to "https://avax.rpc",
+        "eip155:1" to "https://eth.rpc",
+        "eip155:137" to "https://polygon.rpc"
       ),
-      chainId = 1
+      chainId = "eip155:1"
     )
 
     assertThat(sdkManager.isInitialized).isTrue()
@@ -166,7 +165,7 @@ class RainSdkManagerTest {
     assertThrows(RainError.InvalidConfig::class.java) {
       sdkManager.initializePortal(
         portalSessionToken = "token",
-        rpcEndpoints = mapOf(0 to "https://rpc.com"),
+        rpcEndpoints = mapOf("eip155:0" to "https://rpc.com"),
         chainId = null
       )
     }
@@ -179,8 +178,8 @@ class RainSdkManagerTest {
       sdkManager.initializePortal(
         portalSessionToken = "token",
         rpcEndpoints = mapOf(
-          1 to "https://eth.rpc",
-          -2 to "https://invalid.rpc"
+          "eip155:1" to "https://eth.rpc",
+          "eip155:-2" to "https://invalid.rpc"
         ),
         chainId = null
       )
@@ -195,8 +194,8 @@ class RainSdkManagerTest {
       sdkManager.initializePortal(
         portalSessionToken = "token",
         rpcEndpoints = mapOf(
-          1 to "https://eth.rpc",
-          137 to "not-a-url"
+          "eip155:1" to "https://eth.rpc",
+          "eip155:137" to "not-a-url"
         ),
         chainId = null
       )
@@ -219,13 +218,13 @@ class RainSdkManagerTest {
   fun `initializePortal twice succeeds and resets Portal instance`() {
     sdkManager.initializePortal(
       portalSessionToken = "first-token",
-      rpcEndpoints = mapOf(1 to "https://eth.rpc"),
-      chainId = 1
+      rpcEndpoints = mapOf("eip155:1" to "https://eth.rpc"),
+      chainId = "eip155:1"
     )
     sdkManager.initializePortal(
       portalSessionToken = "second-token",
-      rpcEndpoints = mapOf(137 to "https://polygon.rpc"),
-      chainId = 137
+      rpcEndpoints = mapOf("eip155:137" to "https://polygon.rpc"),
+      chainId = "eip155:137"
     )
     assertThat(sdkManager.isInitialized).isTrue()
   }

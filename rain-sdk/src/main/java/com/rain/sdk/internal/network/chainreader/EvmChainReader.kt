@@ -32,7 +32,7 @@ import timber.log.Timber
  */
 internal class EvmChainReader(
     private val jsonRpcClient: JsonRpcClient = JsonRpcClient(),
-    private val rpcUrlResolver: (Int) -> String?
+    private val rpcUrlResolver: (String) -> String?
 ) : ChainReader {
 
     private companion object {
@@ -42,11 +42,11 @@ internal class EvmChainReader(
 
     /** Convenience constructor backed by a static `chainId → rpcUrl` map. */
     constructor(
-        rpcEndpoints: Map<Int, String>,
+        rpcEndpoints: Map<String, String>,
         jsonRpcClient: JsonRpcClient = JsonRpcClient()
     ) : this(jsonRpcClient, { rpcEndpoints[it] })
 
-    override suspend fun getNativeBalance(chainId: Int, walletAddress: String): Double {
+    override suspend fun getNativeBalance(chainId: String, walletAddress: String): Double {
         val rpcUrl = resolveRpcUrl(chainId)
         validateAddress(walletAddress, "wallet address")
         val hex = jsonRpcClient.callForHexResult(
@@ -58,7 +58,7 @@ internal class EvmChainReader(
     }
 
     override suspend fun getERC20Balance(
-        chainId: Int,
+        chainId: String,
         tokenAddress: String,
         walletAddress: String,
         decimals: Int?
@@ -80,7 +80,7 @@ internal class EvmChainReader(
     }
 
     override suspend fun getBalances(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         tokens: List<TokenInfo>
     ): List<Balance> {
@@ -94,7 +94,7 @@ internal class EvmChainReader(
     }
 
     override suspend fun getBalance(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         token: Token,
         tokenInfo: TokenInfo?
@@ -126,14 +126,14 @@ internal class EvmChainReader(
         }
     }
 
-    override suspend fun getDecimals(chainId: Int, tokenAddress: String): Int {
+    override suspend fun getDecimals(chainId: String, tokenAddress: String): Int {
         val rpcUrl = resolveRpcUrl(chainId)
         validateAddress(tokenAddress, "token address")
         val hex = ethCall(rpcUrl, tokenAddress, "0x" + ERC20Selectors.DECIMALS)
         return EthereumConverter.parseHexToInt(hex)
     }
 
-    override suspend fun getSymbol(chainId: Int, tokenAddress: String): String? {
+    override suspend fun getSymbol(chainId: String, tokenAddress: String): String? {
         val rpcUrl = resolveRpcUrl(chainId)
         validateAddress(tokenAddress, "token address")
         val hex = ethCall(rpcUrl, tokenAddress, "0x" + ERC20Selectors.SYMBOL)
@@ -157,7 +157,7 @@ internal class EvmChainReader(
 
     private suspend fun fetchViaMulticall3(
         rpcUrl: String,
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         tokens: List<TokenInfo>
     ): List<Balance> {
@@ -230,7 +230,7 @@ internal class EvmChainReader(
      */
     private suspend fun fetchViaParallelCalls(
         rpcUrl: String,
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         tokens: List<TokenInfo>
     ): List<Balance> = coroutineScope {
@@ -276,7 +276,7 @@ internal class EvmChainReader(
      * Builds a native-currency [Balance] from a raw hex wei value, pulling symbol / name /
      * decimals from the static native-currency table.
      */
-    private fun nativeBalance(chainId: Int, hex: String): Balance {
+    private fun nativeBalance(chainId: String, hex: String): Balance {
         val native = TokenRegistry.nativeCurrency(chainId)
         return Balance(
             token = Token.Native,
@@ -289,7 +289,7 @@ internal class EvmChainReader(
     }
 
     /** Builds a contract-token [Balance] from a raw hex base-unit value and the token's metadata. */
-    private fun tokenBalance(chainId: Int, token: TokenInfo, hex: String): Balance =
+    private fun tokenBalance(chainId: String, token: TokenInfo, hex: String): Balance =
         Balance(
             token = Token.Contract(token.address),
             chainId = chainId,
@@ -306,7 +306,7 @@ internal class EvmChainReader(
      * with the correct chain ID — if the chain isn't configured or its URL is unparseable,
      * so parse failures don't surface from [JsonRpcClient] without chain context.
      */
-    private fun resolveRpcUrl(chainId: Int): String {
+    private fun resolveRpcUrl(chainId: String): String {
         val rpcUrl = rpcUrlResolver(chainId)
             ?: throw RainError.InvalidConfig("No RPC endpoint configured for chainId=$chainId")
         if (rpcUrl.toHttpUrlOrNull() == null) {

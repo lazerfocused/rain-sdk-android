@@ -21,7 +21,7 @@ interface RainTransactionBuilder {
      * Build EIP-712 message for obtaining the admin signature.
      */
     suspend fun buildEIP712Message(
-        chainId: Int,
+        chainId: String,
         addresses: RainWithdrawAddresses,
         walletAddress: String,
         amount: Double,

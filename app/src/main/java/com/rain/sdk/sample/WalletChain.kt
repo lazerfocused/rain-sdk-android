@@ -1,7 +1,5 @@
 package com.rain.sdk.sample
 
-import com.rain.sdk.RainChain
-
 /**
  * The wallet/chain the sample app is currently operating on, selected via the Home-screen
  * dropdown. Bundles everything the feature screens need to be chain-agnostic: the SDK chain
@@ -13,7 +11,8 @@ import com.rain.sdk.RainChain
  */
 enum class WalletChain(
     val displayName: String,
-    val chainId: Int,
+    /** CAIP-2 chain ID passed to the public Rain SDK API (e.g. "eip155:43113", "solana:<genesis>"). */
+    val chainId: String,
     val rpcUrl: String,
     val nativeSymbol: String,
     val isSolana: Boolean,
@@ -25,7 +24,7 @@ enum class WalletChain(
 ) {
     EVM(
         displayName = "EVM · Avalanche Fuji",
-        chainId = RainChain.AVALANCHE_TESTNET,
+        chainId = "eip155:43113", // Avalanche Fuji testnet (RainChain.AVALANCHE_TESTNET)
         rpcUrl = "https://api.avax-test.network/ext/bc/C/rpc",
         nativeSymbol = "AVAX",
         isSolana = false,
@@ -35,7 +34,7 @@ enum class WalletChain(
     ),
     BASE_SEPOLIA(
         displayName = "EVM · Base Sepolia",
-        chainId = 84532, // Base Sepolia testnet (already in the SDK's Turnkey-supported chains)
+        chainId = "eip155:84532", // Base Sepolia testnet (already in the SDK's Turnkey-supported chains)
         rpcUrl = "https://sepolia.base.org",
         nativeSymbol = "ETH",
         isSolana = false,
@@ -45,7 +44,7 @@ enum class WalletChain(
     ),
     SOLANA(
         displayName = "Solana · Devnet",
-        chainId = RainChain.SOLANA_DEVNET,
+        chainId = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", // Solana Devnet (RainChain.SOLANA_DEVNET)
         rpcUrl = "https://api.devnet.solana.com",
         nativeSymbol = "SOL",
         isSolana = true,
@@ -77,7 +76,7 @@ enum class WalletChain(
             "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
         /** Every chain's RPC endpoint, for initializing the SDK with all chains at once. */
-        val rpcEndpoints: Map<Int, String>
+        val rpcEndpoints: Map<String, String>
             get() = entries.associate { it.chainId to it.rpcUrl }
     }
 }

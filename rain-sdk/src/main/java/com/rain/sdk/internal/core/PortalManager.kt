@@ -2,6 +2,7 @@ package com.rain.sdk.internal.core
 
 import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.internal.tokenstore.TokenMetadataStore
+import com.rain.sdk.internal.utils.ChainIdFormat
 import io.portalhq.android.Portal
 import io.portalhq.android.api.data.ntfassetsbychain.TokenBalance
 import io.portalhq.android.mpc.data.FeatureFlags
@@ -60,7 +61,7 @@ internal class PortalManager {
    * Initializes the Portal instance with provided configuration.
    *
    * @param apiKey Portal API key (session token)
-   * @param legacyEthChainId The default chain ID for legacy operations
+   * @param legacyEthChainId The default CAIP-2 chain ID for legacy operations (an eip155 one)
    * @param rpcConfig Map of chain identifiers to RPC URLs
    * @param featureFlags Portal feature flags
    * @param backupConfigs Portal backup configuration (optional)
@@ -68,7 +69,7 @@ internal class PortalManager {
    */
   fun initialize(
     apiKey: String,
-    legacyEthChainId: Int,
+    legacyEthChainId: String,
     rpcConfig: Map<String, String>,
     featureFlags: FeatureFlags,
     autoApprove: Boolean
@@ -77,9 +78,13 @@ internal class PortalManager {
 
     scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    // Portal needs the numeric chain ID. Extract it from the CAIP-2 default; fall back to
+    // Ethereum mainnet (1) if the default isn't an eip155 chain (preserves EVM-default behavior).
+    val numericLegacyChainId = ChainIdFormat.EIP155.parse(legacyEthChainId) ?: 1
+
     val portal = createPortal(
       apiKey = apiKey,
-      legacyEthChainId = legacyEthChainId,
+      legacyEthChainId = numericLegacyChainId,
       rpcConfig = rpcConfig,
       featureFlags = featureFlags,
       autoApprove = autoApprove
@@ -126,7 +131,7 @@ internal class PortalManager {
    * exact base-unit precision.
    */
   suspend fun getBalance(
-    chainId: Int,
+    chainId: String,
     token: Token,
     tokenStore: TokenMetadataStore
   ): Balance = when (token) {
@@ -140,12 +145,12 @@ internal class PortalManager {
    * amounts reconstructed exactly and zero-balance contract tokens omitted.
    */
   suspend fun getBalances(
-    chainId: Int,
+    chainId: String,
     tokenStore: TokenMetadataStore
   ): List<Balance> {
     val native = fetchNativeBalance(chainId, tokenStore)
     val portal = getPortalInstance()
-    val eip155ChainId = "${PortalNamespace.EIP155.value}:$chainId"
+    val eip155ChainId = chainId
 
     val tokenBalances = try {
       portal.api.getAssets(eip155ChainId).getOrThrow().tokenBalances
@@ -177,10 +182,10 @@ internal class PortalManager {
   }
 
   /** Fetches the native balance via `eth_getBalance`, preserving exact wei precision. */
-  private suspend fun fetchNativeBalance(chainId: Int, tokenStore: TokenMetadataStore): Balance {
+  private suspend fun fetchNativeBalance(chainId: String, tokenStore: TokenMetadataStore): Balance {
     val portal = getPortalInstance()
     val walletAddress = getAddress()
-    val eip155ChainId = "${PortalNamespace.EIP155.value}:$chainId"
+    val eip155ChainId = chainId
     val result = portal.request(
       chainId = eip155ChainId,
       method = PortalRequestMethod.eth_getBalance,
@@ -200,14 +205,14 @@ internal class PortalManager {
 
   /** Fetches a single ERC-20 balance via direct RPC `eth_call` (balanceOf), preserving exact precision. */
   private suspend fun fetchContractBalance(
-    chainId: Int,
+    chainId: String,
     address: String,
     tokenStore: TokenMetadataStore
   ): Balance {
     val portal = getPortalInstance()
     val walletAddress = getAddress()
     val info = tokenStore.tokenInfo(chainId, address)
-    val eip155ChainId = "${PortalNamespace.EIP155.value}:$chainId"
+    val eip155ChainId = chainId
 
     val function = Function(
       "balanceOf",
@@ -261,13 +266,13 @@ internal class PortalManager {
    * @return RainTransactionResult containing the list of transactions
    */
   suspend fun getTransactions(
-    chainId: Int,
+    chainId: String,
     limit: Int? = null,
     offset: Int? = null,
     order: RainTransactionOrder? = null
   ): RainTransactionResult {
     val portal = getPortalInstance()
-    val eip155ChainId = "${PortalNamespace.EIP155.value}:$chainId"
+    val eip155ChainId = chainId
 
     return try {
       val portalOrder = when (order) {
@@ -324,7 +329,7 @@ internal class PortalManager {
    * @throws RainError.ProviderError if signing fails
    */
   suspend fun signTypedData(
-    chainId: Int,
+    chainId: String,
     walletAddress: String,
     typedDataJson: String
   ): String {
@@ -332,7 +337,7 @@ internal class PortalManager {
 
     return try {
       val response = portal.request(
-        chainId = "${PortalNamespace.EIP155.value}:$chainId",
+        chainId = chainId,
         method = PortalRequestMethod.eth_signTypedData_v4,
         params = listOf(walletAddress, typedDataJson)
       )
@@ -355,14 +360,14 @@ internal class PortalManager {
    * @return Estimated fee in the chain's native token (e.g. ETH/AVAX)
    */
   suspend fun estimateTransactionFee(
-    chainId: Int,
+    chainId: String,
     from: String,
     to: String,
     data: String,
     value: String = "0x0"
   ): Double {
     val portal = getPortalInstance()
-    val eip155ChainId = "${PortalNamespace.EIP155.value}:$chainId"
+    val eip155ChainId = chainId
 
     val ethParams = io.portalhq.android.provider.data.EthTransactionParam(
       from = from,
@@ -414,14 +419,14 @@ internal class PortalManager {
    * @throws Exception if transaction fails
    */
   suspend fun sendTransaction(
-    chainId: Int,
+    chainId: String,
     from: String,
     to: String,
     data: String,
     value: String = "0x0"
   ): String {
     val portal = getPortalInstance()
-    val eip155ChainId = "${PortalNamespace.EIP155.value}:$chainId"
+    val eip155ChainId = chainId
 
     val ethParam = mapOf(
       "from" to from,

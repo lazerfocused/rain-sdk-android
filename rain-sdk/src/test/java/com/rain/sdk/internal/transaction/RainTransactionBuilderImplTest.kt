@@ -84,7 +84,7 @@ class RainTransactionBuilderImplTest {
 
   @Test
   fun `buildEIP712Message resolves RPC from RainConfig when missing`() = runBlocking {
-    val chainId = 1
+    val chainId = "eip155:1"
     val rpcUrl = "https://mainnet.infura.io"
 
     // Setup RainConfig
@@ -119,7 +119,7 @@ class RainTransactionBuilderImplTest {
 
   @Test
   fun `buildEIP712Message throws InvalidConfig when RPC missing and nonce missing`() = runBlocking {
-    val chainId = 999
+    val chainId = "eip155:999"
     // Ensure RainConfig has no RPC for 999
 
     try {

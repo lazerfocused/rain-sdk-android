@@ -81,7 +81,7 @@ class RainSdkManagerWalletInfoTest {
     fun `getTransactions throws SdkNotInitialized before initialization`() {
         val manager = RainSdkManager()
         assertThrows(RainError.SdkNotInitialized::class.java) {
-            runBlocking { manager.getTransactions(chainId = 1) }
+            runBlocking { manager.getTransactions(chainId = "eip155:1") }
         }
     }
 
@@ -90,7 +90,7 @@ class RainSdkManagerWalletInfoTest {
         val (manager, stub) = TestManagers.stubProviderManager()
         stub.transactionsToReturn = RainTransactionResult(transactions = emptyList())
 
-        val result = manager.getTransactions(chainId = 1)
+        val result = manager.getTransactions(chainId = "eip155:1")
         assertThat(result.transactions).isEmpty()
     }
 
@@ -109,7 +109,7 @@ class RainSdkManagerWalletInfoTest {
         stub.transactionsToReturn = RainTransactionResult(transactions = listOf(tx))
 
         val result = manager.getTransactions(
-            chainId = 1,
+            chainId = "eip155:1",
             limit = 5,
             offset = 2,
             order = RainTransactionOrder.ASC
@@ -119,7 +119,7 @@ class RainSdkManagerWalletInfoTest {
         assertThat(result.transactions[0].hash).isEqualTo("0xabc")
         assertThat(stub.getTransactionsCalls).hasSize(1)
         val call = stub.getTransactionsCalls.single()
-        assertThat(call.chainId).isEqualTo(1)
+        assertThat(call.chainId).isEqualTo("eip155:1")
         assertThat(call.limit).isEqualTo(5)
         assertThat(call.offset).isEqualTo(2)
         assertThat(call.order).isEqualTo(RainTransactionOrder.ASC)
@@ -130,7 +130,7 @@ class RainSdkManagerWalletInfoTest {
         assumeJdk24()
         val failing = object : StubWalletProvider() {
             override suspend fun getTransactions(
-                chainId: Int,
+                chainId: String,
                 limit: Int?,
                 offset: Int?,
                 order: RainTransactionOrder?
@@ -140,7 +140,7 @@ class RainSdkManagerWalletInfoTest {
         }
         val (manager, _) = TestManagers.stubProviderManager(failing)
         val ex = runCatching {
-            runBlocking { manager.getTransactions(chainId = 1) }
+            runBlocking { manager.getTransactions(chainId = "eip155:1") }
         }.exceptionOrNull()
         assertThat(ex).isInstanceOf(RainError.ProviderError::class.java)
     }

@@ -29,7 +29,7 @@ class RainSdkManagerBalanceTest {
 
     private val usdcBalance = Balance(
         token = Token.Contract(TestFixtures.USDC_ADDRESS),
-        chainId = 1,
+        chainId = "eip155:1",
         rawAmount = BigInteger("100000000"),
         decimals = 6,
         symbol = "USDC",
@@ -38,7 +38,7 @@ class RainSdkManagerBalanceTest {
 
     private val ethBalance = Balance(
         token = Token.Native,
-        chainId = 1,
+        chainId = "eip155:1",
         rawAmount = BigInteger("1500000000000000000"),
         decimals = 18,
         symbol = "ETH",
@@ -61,7 +61,7 @@ class RainSdkManagerBalanceTest {
     fun `getBalance throws SdkNotInitialized before initialization`() {
         val manager = RainSdkManager()
         assertThrows(RainError.SdkNotInitialized::class.java) {
-            runBlocking { manager.getBalance(chainId = 1, token = Token.Native) }
+            runBlocking { manager.getBalance(chainId = "eip155:1", token = Token.Native) }
         }
     }
 
@@ -69,7 +69,7 @@ class RainSdkManagerBalanceTest {
     fun `getBalances throws SdkNotInitialized before initialization`() {
         val manager = RainSdkManager()
         assertThrows(RainError.SdkNotInitialized::class.java) {
-            runBlocking { manager.getBalances(chainId = 1) }
+            runBlocking { manager.getBalances(chainId = "eip155:1") }
         }
     }
 
@@ -80,12 +80,12 @@ class RainSdkManagerBalanceTest {
         val (manager, stub) = TestManagers.stubProviderManager()
         stub.balanceToReturn = ethBalance
 
-        val balance = manager.getBalance(chainId = 1, token = Token.Native)
+        val balance = manager.getBalance(chainId = "eip155:1", token = Token.Native)
 
         assertThat(balance).isEqualTo(ethBalance)
         assertThat(stub.getBalanceCalls).hasSize(1)
         val call = stub.getBalanceCalls.single()
-        assertThat(call.chainId).isEqualTo(1)
+        assertThat(call.chainId).isEqualTo("eip155:1")
         assertThat(call.token).isEqualTo(Token.Native)
     }
 
@@ -95,7 +95,7 @@ class RainSdkManagerBalanceTest {
         stub.balanceToReturn = usdcBalance
 
         val token = Token.Contract(TestFixtures.USDC_ADDRESS)
-        val balance = manager.getBalance(chainId = 1, token = token)
+        val balance = manager.getBalance(chainId = "eip155:1", token = token)
 
         assertThat(balance).isEqualTo(usdcBalance)
         assertThat(stub.getBalanceCalls.single().token).isEqualTo(token)
@@ -106,10 +106,10 @@ class RainSdkManagerBalanceTest {
         val (manager, stub) = TestManagers.stubProviderManager()
         stub.balancesToReturn = listOf(ethBalance, usdcBalance)
 
-        val balances = manager.getBalances(chainId = 1)
+        val balances = manager.getBalances(chainId = "eip155:1")
 
         assertThat(balances).containsExactly(ethBalance, usdcBalance).inOrder()
-        assertThat(stub.getBalancesCalls).containsExactly(1)
+        assertThat(stub.getBalancesCalls).containsExactly("eip155:1")
     }
 
     // ---- error handling -----------------------------------------------------------
@@ -119,13 +119,13 @@ class RainSdkManagerBalanceTest {
         // ErrorMapper.mapTransactionError transitively loads Turnkey (JDK-24) classes.
         assumeJdk24()
         val failing = object : StubWalletProvider() {
-            override suspend fun getBalances(chainId: Int): List<Balance> {
+            override suspend fun getBalances(chainId: String): List<Balance> {
                 throw RuntimeException("indexer 503")
             }
         }
         val (manager, _) = TestManagers.stubProviderManager(failing)
 
-        val ex = runCatching { runBlocking { manager.getBalances(chainId = 1) } }.exceptionOrNull()
+        val ex = runCatching { runBlocking { manager.getBalances(chainId = "eip155:1") } }.exceptionOrNull()
         // Generic RuntimeException → ProviderError per ErrorMapper.mapTransactionError.
         assertThat(ex).isInstanceOf(RainError.ProviderError::class.java)
     }
@@ -133,13 +133,13 @@ class RainSdkManagerBalanceTest {
     @Test
     fun `getBalance rethrows RainError WalletUnavailable without re-wrapping`() {
         val failing = object : StubWalletProvider() {
-            override suspend fun getBalance(chainId: Int, token: Token): Balance {
+            override suspend fun getBalance(chainId: String, token: Token): Balance {
                 throw RainError.WalletUnavailable("no wallet")
             }
         }
         val (manager, _) = TestManagers.stubProviderManager(failing)
         assertThrows(RainError.WalletUnavailable::class.java) {
-            runBlocking { manager.getBalance(chainId = 1, token = Token.Native) }
+            runBlocking { manager.getBalance(chainId = "eip155:1", token = Token.Native) }
         }
     }
 }

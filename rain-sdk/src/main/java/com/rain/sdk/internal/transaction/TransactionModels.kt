@@ -11,7 +11,7 @@ import java.math.BigInteger
  * Encapsulates all parameters needed for withdrawing collateral from a proxy contract.
  */
 internal data class WithdrawCollateralRequest(
-    val chainId: Int,
+    val chainId: String,
     val addresses: RainWithdrawAddresses,
     val amount: Double,
     val decimals: Int,

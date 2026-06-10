@@ -38,7 +38,7 @@ class EvmChainReaderTest {
         rpc.shutdown()
     }
 
-    private fun makeReader(chainId: Int): EvmChainReader =
+    private fun makeReader(chainId: String): EvmChainReader =
         EvmChainReader(rpcEndpoints = mapOf(chainId to rpc.urlFor(chainId)))
 
     // ---------- single-token Double paths ----------
@@ -47,9 +47,9 @@ class EvmChainReaderTest {
     fun `getNativeBalance parses eth_getBalance hex into ether units`(): Unit = runBlocking {
         // 0xDE0B6B3A7640000 = 1e18 wei = 1 ETH
         rpc.stub("eth_getBalance", "0xde0b6b3a7640000")
-        val reader = makeReader(chainId = 1)
+        val reader = makeReader(chainId = "eip155:1")
 
-        val balance = reader.getNativeBalance(1, wallet)
+        val balance = reader.getNativeBalance("eip155:1", wallet)
 
         assertThat(balance).isWithin(1e-9).of(1.0)
         assertThat(rpc.recordedMethods).containsExactly("eth_getBalance")
@@ -59,9 +59,9 @@ class EvmChainReaderTest {
     fun `getERC20Balance issues eth_call and scales by token decimals`() = runBlocking {
         // 0xf4240 = 1_000_000 (1.00 USDC at 6 decimals), padded to a 32-byte uint256.
         rpc.stub("eth_call", "0x" + "0".repeat(59) + "f4240")
-        val reader = makeReader(chainId = 1)
+        val reader = makeReader(chainId = "eip155:1")
 
-        val balance = reader.getERC20Balance(1, usdc, wallet, decimals = 6)
+        val balance = reader.getERC20Balance("eip155:1", usdc, wallet, decimals = 6)
 
         assertThat(balance).isWithin(1e-9).of(1.0)
     }
@@ -71,7 +71,7 @@ class EvmChainReaderTest {
     @Test
     fun `getBalances on a non-Multicall3 chain fans out one balanceOf per token`() = runBlocking {
         // Use a chain not in CANONICALLY_DEPLOYED_CHAIN_IDS so the parallel fallback runs.
-        val chainId = 43113 // Avalanche Fuji testnet
+        val chainId = "eip155:43113" // Avalanche Fuji testnet
         rpc.stub("eth_getBalance", "0x0") // native = 0
         // 0xf4240 = 1_000_000 → exact raw. Both tokens share the same stubbed eth_call
         // response (MockRpcServer dispatches by method, not by request body).
@@ -105,7 +105,7 @@ class EvmChainReaderTest {
     @Test
     fun `getBalances surfaces native success but omits per-token failures`() = runBlocking {
         // Native call works; the eth_call shared by both tokens returns an error.
-        val chainId = 43113
+        val chainId = "eip155:43113"
         rpc.stub("eth_getBalance", "0xde0b6b3a7640000") // 1 ETH
         rpc.stubNetworkFailure("eth_call")
         val reader = EvmChainReader(rpcEndpoints = mapOf(chainId to rpc.urlFor(chainId)))
@@ -123,7 +123,7 @@ class EvmChainReaderTest {
 
     @Test
     fun `getBalances treats native eth_getBalance failure as fatal`() {
-        val chainId = 43113
+        val chainId = "eip155:43113"
         rpc.stubNetworkFailure("eth_getBalance")
         val reader = EvmChainReader(rpcEndpoints = mapOf(chainId to rpc.urlFor(chainId)))
 
@@ -144,9 +144,9 @@ class EvmChainReaderTest {
     @Test
     fun `getBalance native builds a Balance from eth_getBalance with registry metadata`() = runBlocking {
         rpc.stub("eth_getBalance", "0xde0b6b3a7640000") // 1 ETH
-        val reader = makeReader(chainId = 1)
+        val reader = makeReader(chainId = "eip155:1")
 
-        val balance = reader.getBalance(1, wallet, Token.Native, tokenInfo = null)
+        val balance = reader.getBalance("eip155:1", wallet, Token.Native, tokenInfo = null)
 
         assertThat(balance.token).isEqualTo(Token.Native)
         assertThat(balance.rawAmount).isEqualTo(BigInteger("1000000000000000000"))
@@ -157,13 +157,13 @@ class EvmChainReaderTest {
     @Test
     fun `getBalance contract builds a Balance from balanceOf with supplied metadata`() = runBlocking {
         rpc.stub("eth_call", "0x" + "0".repeat(59) + "f4240") // 1_000_000
-        val reader = makeReader(chainId = 1)
+        val reader = makeReader(chainId = "eip155:1")
 
         val balance = reader.getBalance(
-            chainId = 1,
+            chainId = "eip155:1",
             walletAddress = wallet,
             token = Token.Contract(usdc),
-            tokenInfo = TokenInfo(1, usdc, "USDC", 6, "USD Coin")
+            tokenInfo = TokenInfo("eip155:1", usdc, "USDC", 6, "USD Coin")
         )
 
         assertThat(balance.token).isEqualTo(Token.Contract(usdc))
@@ -178,9 +178,9 @@ class EvmChainReaderTest {
     @Test
     fun `getDecimals parses the eth_call uint into an Int`() = runBlocking {
         rpc.stub("eth_call", "0x" + "6".padStart(64, '0')) // 0x...06 = 6
-        val reader = makeReader(chainId = 1)
+        val reader = makeReader(chainId = "eip155:1")
 
-        assertThat(reader.getDecimals(1, usdc)).isEqualTo(6)
+        assertThat(reader.getDecimals("eip155:1", usdc)).isEqualTo(6)
     }
 
     @Test
@@ -191,9 +191,9 @@ class EvmChainReaderTest {
             "4".padStart(64, '0') +
             "55534443".padEnd(64, '0') // "USDC"
         rpc.stub("eth_call", symbolHex)
-        val reader = makeReader(chainId = 1)
+        val reader = makeReader(chainId = "eip155:1")
 
-        assertThat(reader.getSymbol(1, usdc)).isEqualTo("USDC")
+        assertThat(reader.getSymbol("eip155:1", usdc)).isEqualTo("USDC")
     }
 
     // ---------- guards ----------
@@ -202,15 +202,15 @@ class EvmChainReaderTest {
     fun `getNativeBalance throws InvalidConfig when chain has no rpc configured`() {
         val reader = EvmChainReader(rpcEndpoints = emptyMap())
         assertThrows(RainError.InvalidConfig::class.java) {
-            runBlocking { reader.getNativeBalance(1, wallet) }
+            runBlocking { reader.getNativeBalance("eip155:1", wallet) }
         }
     }
 
     @Test
     fun `getNativeBalance throws InternalError on syntactically invalid wallet address`() {
-        val reader = makeReader(chainId = 1)
+        val reader = makeReader(chainId = "eip155:1")
         assertThrows(RainError.InternalError::class.java) {
-            runBlocking { reader.getNativeBalance(1, walletAddress = "not-an-address") }
+            runBlocking { reader.getNativeBalance("eip155:1", walletAddress = "not-an-address") }
         }
     }
 }

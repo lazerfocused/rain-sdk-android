@@ -1,6 +1,7 @@
 package com.rain.sdk.internal.transaction
 
 import com.rain.sdk.internal.error.RainError
+import com.rain.sdk.internal.utils.ChainIdFormat
 
 /**
  * Validates transaction parameters.
@@ -17,9 +18,12 @@ internal class TransactionValidator {
      * @throws RainError.InvalidConfig if validation fails
      */
     fun validateWithdrawRequest(request: WithdrawCollateralRequest) {
-        // Validate chain ID
-        if (request.chainId <= 0) {
-            throw RainError.InvalidConfig("Invalid chainId: ${request.chainId}. Must be a positive integer.")
+        // Validate CAIP-2 chain ID (a recognizable eip155 or solana namespace)
+        val chainId = request.chainId
+        val validChainId = chainId.isNotBlank() &&
+            (ChainIdFormat.EIP155.parse(chainId) != null || chainId.startsWith("solana:"))
+        if (!validChainId) {
+            throw RainError.InvalidConfig("Invalid CAIP-2 chainId: ${request.chainId}")
         }
         
         // Validate amount

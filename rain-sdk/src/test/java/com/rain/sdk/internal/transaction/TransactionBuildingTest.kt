@@ -68,7 +68,7 @@ class TransactionBuildingTest {
     @Test
     fun `buildEIP712Message succeeds with explicit nonce and 18 decimals`() = runBlocking {
         val (json, salt) = RainTransactionBuilderImpl.buildEIP712Message(
-            chainId = 1,
+            chainId = "eip155:1",
             addresses = validAddresses,
             walletAddress = TestFixtures.WALLET_ADDRESS,
             amount = 100.0,
@@ -87,7 +87,7 @@ class TransactionBuildingTest {
     @Test
     fun `buildEIP712Message uses 6 decimals correctly (USDC-like)`() = runBlocking {
         val (json, _) = RainTransactionBuilderImpl.buildEIP712Message(
-            chainId = 1,
+            chainId = "eip155:1",
             addresses = validAddresses,
             walletAddress = TestFixtures.WALLET_ADDRESS,
             amount = 100.5,
@@ -101,7 +101,7 @@ class TransactionBuildingTest {
     @Test
     fun `buildEIP712Message handles zero amount`() = runBlocking {
         val (json, _) = RainTransactionBuilderImpl.buildEIP712Message(
-            chainId = 1,
+            chainId = "eip155:1",
             addresses = validAddresses,
             walletAddress = TestFixtures.WALLET_ADDRESS,
             amount = 0.0,
@@ -115,12 +115,12 @@ class TransactionBuildingTest {
     @Test
     fun `buildEIP712Message generates a different salt on each call`() = runBlocking {
         val (json1, salt1) = RainTransactionBuilderImpl.buildEIP712Message(
-            chainId = 1, addresses = validAddresses,
+            chainId = "eip155:1", addresses = validAddresses,
             walletAddress = TestFixtures.WALLET_ADDRESS,
             amount = 100.0, decimals = 18, nonce = BigInteger.ONE
         )
         val (json2, salt2) = RainTransactionBuilderImpl.buildEIP712Message(
-            chainId = 1, addresses = validAddresses,
+            chainId = "eip155:1", addresses = validAddresses,
             walletAddress = TestFixtures.WALLET_ADDRESS,
             amount = 100.0, decimals = 18, nonce = BigInteger.ONE
         )
@@ -132,12 +132,12 @@ class TransactionBuildingTest {
     @Test
     fun `buildEIP712Message respects different chain IDs`() = runBlocking {
         val (mainnet, _) = RainTransactionBuilderImpl.buildEIP712Message(
-            chainId = 1, addresses = validAddresses,
+            chainId = "eip155:1", addresses = validAddresses,
             walletAddress = TestFixtures.WALLET_ADDRESS,
             amount = 100.0, decimals = 18, nonce = BigInteger.ONE
         )
         val (polygon, _) = RainTransactionBuilderImpl.buildEIP712Message(
-            chainId = 137, addresses = validAddresses,
+            chainId = "eip155:137", addresses = validAddresses,
             walletAddress = TestFixtures.WALLET_ADDRESS,
             amount = 100.0, decimals = 18, nonce = BigInteger.ONE
         )
@@ -150,7 +150,7 @@ class TransactionBuildingTest {
 
     @Test
     fun `buildEIP712Message reads nonce from RPC when nonce param is null`() = runBlocking {
-        RainConfig.getInstance().setRpcUrl(1, "https://rpc.example/test")
+        RainConfig.getInstance().setRpcUrl("eip155:1", "https://rpc.example/test")
 
         val mockEthCall = mockk<Request<*, EthCall>>()
         val response = EthCall().apply {
@@ -161,7 +161,7 @@ class TransactionBuildingTest {
         every { mockEthCall.sendAsync() } returns CompletableFuture.completedFuture(response)
 
         val (json, _) = RainTransactionBuilderImpl.buildEIP712Message(
-            chainId = 1,
+            chainId = "eip155:1",
             addresses = validAddresses,
             walletAddress = TestFixtures.WALLET_ADDRESS,
             amount = 1.0,
@@ -177,7 +177,7 @@ class TransactionBuildingTest {
         assertThrows(RainError.InvalidConfig::class.java) {
             runBlocking {
                 RainTransactionBuilderImpl.buildEIP712Message(
-                    chainId = 999,
+                    chainId = "eip155:999",
                     addresses = validAddresses,
                     walletAddress = TestFixtures.WALLET_ADDRESS,
                     amount = 100.0,
@@ -191,7 +191,7 @@ class TransactionBuildingTest {
     @Test
     fun `buildEIP712Message uses explicit nonce even for unknown chainId (no RPC needed)`() = runBlocking {
         val (json, _) = RainTransactionBuilderImpl.buildEIP712Message(
-            chainId = 999,
+            chainId = "eip155:999",
             addresses = validAddresses,
             walletAddress = TestFixtures.WALLET_ADDRESS,
             amount = 100.0,
@@ -209,7 +209,7 @@ class TransactionBuildingTest {
         assertThrows(RainError.InvalidConfig::class.java) {
             runBlocking {
                 RainTransactionBuilderImpl.buildEIP712Message(
-                    chainId = 1, addresses = bad,
+                    chainId = "eip155:1", addresses = bad,
                     walletAddress = TestFixtures.WALLET_ADDRESS,
                     amount = 100.0, decimals = 18, nonce = BigInteger.ONE
                 )
@@ -223,7 +223,7 @@ class TransactionBuildingTest {
         assertThrows(RainError.InvalidConfig::class.java) {
             runBlocking {
                 RainTransactionBuilderImpl.buildEIP712Message(
-                    chainId = 1, addresses = bad,
+                    chainId = "eip155:1", addresses = bad,
                     walletAddress = TestFixtures.WALLET_ADDRESS,
                     amount = 100.0, decimals = 18, nonce = BigInteger.ONE
                 )
@@ -236,7 +236,7 @@ class TransactionBuildingTest {
         assertThrows(RainError.InvalidConfig::class.java) {
             runBlocking {
                 RainTransactionBuilderImpl.buildEIP712Message(
-                    chainId = 1, addresses = validAddresses,
+                    chainId = "eip155:1", addresses = validAddresses,
                     walletAddress = "0xnope",
                     amount = 100.0, decimals = 18, nonce = BigInteger.ONE
                 )

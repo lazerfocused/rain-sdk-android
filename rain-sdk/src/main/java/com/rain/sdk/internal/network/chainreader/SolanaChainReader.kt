@@ -18,16 +18,16 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  */
 internal class SolanaChainReader(
     private val solanaRpcClient: SolanaRpcClient = SolanaRpcClient(),
-    private val rpcUrlResolver: (Int) -> String?
+    private val rpcUrlResolver: (String) -> String?
 ) : ChainReader {
 
     /** Convenience constructor backed by a static `chainId → rpcUrl` map. */
     constructor(
-        rpcEndpoints: Map<Int, String>,
+        rpcEndpoints: Map<String, String>,
         solanaRpcClient: SolanaRpcClient = SolanaRpcClient()
     ) : this(solanaRpcClient, { rpcEndpoints[it] })
 
-    override suspend fun getNativeBalance(chainId: Int, walletAddress: String): Double {
+    override suspend fun getNativeBalance(chainId: String, walletAddress: String): Double {
         val rpcUrl = resolveRpcUrl(chainId)
         validateAddress(walletAddress)
         val lamports = solanaRpcClient.getBalanceLamports(rpcUrl, walletAddress)
@@ -35,7 +35,7 @@ internal class SolanaChainReader(
     }
 
     override suspend fun getBalance(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         token: Token,
         tokenInfo: TokenInfo?
@@ -62,25 +62,25 @@ internal class SolanaChainReader(
     }
 
     override suspend fun getBalances(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         tokens: List<TokenInfo>
     ): List<Balance> = listOf(getBalance(chainId, walletAddress, Token.Native, null))
 
     override suspend fun getERC20Balance(
-        chainId: Int,
+        chainId: String,
         tokenAddress: String,
         walletAddress: String,
         decimals: Int?
     ): Double = throw RainError.InternalError("ERC-20 reads are not supported on Solana")
 
-    override suspend fun getDecimals(chainId: Int, tokenAddress: String): Int =
+    override suspend fun getDecimals(chainId: String, tokenAddress: String): Int =
         throw RainError.InternalError("getDecimals is not supported on Solana")
 
-    override suspend fun getSymbol(chainId: Int, tokenAddress: String): String? =
+    override suspend fun getSymbol(chainId: String, tokenAddress: String): String? =
         throw RainError.InternalError("getSymbol is not supported on Solana")
 
-    private fun resolveRpcUrl(chainId: Int): String {
+    private fun resolveRpcUrl(chainId: String): String {
         val rpcUrl = rpcUrlResolver(chainId)
             ?: throw RainError.InvalidConfig("No RPC endpoint configured for chainId=$chainId")
         if (rpcUrl.toHttpUrlOrNull() == null) {

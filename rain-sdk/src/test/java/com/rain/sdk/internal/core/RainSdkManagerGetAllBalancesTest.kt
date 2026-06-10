@@ -21,7 +21,7 @@ import java.math.BigInteger
  */
 class RainSdkManagerGetAllBalancesTest {
 
-    private fun nativeBalance(chainId: Int) = Balance(
+    private fun nativeBalance(chainId: String) = Balance(
         token = Token.Native,
         chainId = chainId,
         rawAmount = BigInteger("1500000000000000000"),
@@ -30,7 +30,7 @@ class RainSdkManagerGetAllBalancesTest {
         name = "Ether"
     )
 
-    private fun usdcBalance(chainId: Int) = Balance(
+    private fun usdcBalance(chainId: String) = Balance(
         token = Token.Contract(TestFixtures.USDC_ADDRESS),
         chainId = chainId,
         rawAmount = BigInteger("100000000"),
@@ -67,10 +67,10 @@ class RainSdkManagerGetAllBalancesTest {
 
     @Test
     fun `getAllBalances tolerates per-chain failures and flattens healthy chains`(): Unit = runBlocking {
-        val failingChain = 137
-        val workingChain = 43114
+        val failingChain = "eip155:137"
+        val workingChain = "eip155:43114"
         val stub = object : StubWalletProvider() {
-            override suspend fun getBalances(chainId: Int): List<Balance> = when (chainId) {
+            override suspend fun getBalances(chainId: String): List<Balance> = when (chainId) {
                 workingChain -> listOf(nativeBalance(workingChain), usdcBalance(workingChain))
                 else -> throw RuntimeException("indexer down for $chainId")
             }
@@ -89,7 +89,7 @@ class RainSdkManagerGetAllBalancesTest {
     @Test
     fun `reset clears wallet provider and configured chain IDs`(): Unit = runBlocking {
         val (manager, _) = TestManagers.stubProviderManager()
-        manager.setConfiguredChainIdsForTest(listOf(1, 137))
+        manager.setConfiguredChainIdsForTest(listOf("eip155:1", "eip155:137"))
 
         manager.reset()
 

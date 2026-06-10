@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.rain.sdk.RainChain
 import com.rain.sdk.interfaces.RainClient
 import com.rain.sdk.sample.NetworkClient
 import com.rain.sdk.sample.SampleLog
@@ -67,17 +66,17 @@ class HomeViewModel(
         if (_state.value.sessionToken.isBlank()) return
 
         val tokenMask = SampleLog.maskToken(_state.value.sessionToken)
-        SampleLog.i("Portal.init", "calling initializePortal sessionToken=$tokenMask chainId=${RainChain.AVALANCHE_TESTNET}")
+        SampleLog.i("Portal.init", "calling initializePortal sessionToken=$tokenMask chainId=eip155:43113")
 
         try {
             val rpcConfig = mapOf(
-                RainChain.AVALANCHE_TESTNET to "https://api.avax-test.network/ext/bc/C/rpc"
+                "eip155:43113" to "https://api.avax-test.network/ext/bc/C/rpc"
             )
 
             rainClient.initializePortal(
                 portalSessionToken = _state.value.sessionToken,
                 rpcEndpoints = rpcConfig,
-                chainId = RainChain.AVALANCHE_TESTNET
+                chainId = "eip155:43113"
             )
 
             SampleLog.i("Portal.init", "success — isInitialized=${rainClient.isInitialized}")
@@ -285,7 +284,7 @@ class HomeViewModel(
                 rainClient.initializeTurnkey(
                     turnkey = TurnkeyAuthSample.context,
                     rpcEndpoints = WalletChain.rpcEndpoints,
-                    chainId = RainChain.AVALANCHE_TESTNET,
+                    chainId = "eip155:43113",
                     walletAddress = null
                 )
                 val evmAddress = runCatching { rainClient.getAddress(WalletChain.EVM.chainId) }.getOrNull()

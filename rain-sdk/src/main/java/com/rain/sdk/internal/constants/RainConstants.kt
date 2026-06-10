@@ -12,12 +12,12 @@ internal object RainConstants {
      * On any other chain, balance reads fall through to `ChainReader`.
      * Source: https://docs.turnkey.com/api-reference/queries/get-balances
      */
-    val TURNKEY_SUPPORTED_CHAINS: Set<Int> = setOf(
-        1,        // Ethereum Mainnet
-        11155111, // Sepolia
-        8453,     // Base Mainnet
-        84532,    // Base Sepolia
-        137,      // Polygon Mainnet
-        80002     // Polygon Amoy
+    val TURNKEY_SUPPORTED_CHAINS: Set<String> = setOf(
+        "eip155:1",        // Ethereum Mainnet
+        "eip155:11155111", // Sepolia
+        "eip155:8453",     // Base Mainnet
+        "eip155:84532",    // Base Sepolia
+        "eip155:137",      // Polygon Mainnet
+        "eip155:80002"     // Polygon Amoy
     )
 }

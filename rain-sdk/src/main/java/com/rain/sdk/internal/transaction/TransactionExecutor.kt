@@ -30,7 +30,7 @@ internal class TransactionExecutor(
      * @throws RainError if transaction fails
      */
     suspend fun sendTransaction(
-        chainId: Int,
+        chainId: String,
         from: String,
         to: String,
         data: String,

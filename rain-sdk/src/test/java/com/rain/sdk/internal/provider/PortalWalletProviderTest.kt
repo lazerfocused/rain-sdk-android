@@ -42,7 +42,7 @@ class PortalWalletProviderTest {
     @Test
     fun `sendNativeToken should call portalManager sendTransaction with correct params`() = runBlocking {
         // Given
-        val chainId = 43114
+        val chainId = "eip155:43114"
         val fromAddress = "0x1234567890123456789012345678901234567890"
         val toAddress = "0x0987654321098765432109876543210987654321"
         val amountInEth = 1.5
@@ -79,7 +79,7 @@ class PortalWalletProviderTest {
     @Test
     fun `sendToken should call portalManager sendTransaction with ABI encoded data`() = runBlocking {
         // Given
-        val chainId = 43114
+        val chainId = "eip155:43114"
         val fromAddress = "0x1234567890123456789012345678901234567890"
         val toAddress = "0x0987654321098765432109876543210987654321"
         val contractAddress = "0x1111111111111111111111111111111111111111"
@@ -141,18 +141,18 @@ class PortalWalletProviderTest {
     fun `getBalance delegates to PortalManager and returns its result`() = runBlocking {
         val expected = Balance(
             token = Token.Native,
-            chainId = 43114,
+            chainId = "eip155:43114",
             rawAmount = BigInteger("1500000000000000000"),
             decimals = 18,
             symbol = "AVAX",
             name = "Avalanche"
         )
-        coEvery { portalManager.getBalance(eq(43114), eq(Token.Native), any()) } returns expected
+        coEvery { portalManager.getBalance(eq("eip155:43114"), eq(Token.Native), any()) } returns expected
 
-        val balance = portalWalletProvider.getBalance(chainId = 43114, token = Token.Native)
+        val balance = portalWalletProvider.getBalance(chainId = "eip155:43114", token = Token.Native)
 
         assertThat(balance).isEqualTo(expected)
-        coVerify { portalManager.getBalance(43114, Token.Native, any()) }
+        coVerify { portalManager.getBalance("eip155:43114", Token.Native, any()) }
     }
 
     @Test
@@ -162,22 +162,22 @@ class PortalWalletProviderTest {
         )
 
         assertThrows(RainError.ProviderError::class.java) {
-            runBlocking { portalWalletProvider.getBalance(chainId = 43114, token = Token.Native) }
+            runBlocking { portalWalletProvider.getBalance(chainId = "eip155:43114", token = Token.Native) }
         }
     }
 
     @Test
     fun `getBalances delegates to PortalManager and returns its result`() = runBlocking {
         val expected = listOf(
-            Balance(Token.Native, 1, BigInteger.ZERO, 18, "ETH", "Ether"),
-            Balance(Token.Contract(TestFixtures.USDC_ADDRESS), 1, BigInteger("25000000"), 6, "USDC", "USDC")
+            Balance(Token.Native, "eip155:1", BigInteger.ZERO, 18, "ETH", "Ether"),
+            Balance(Token.Contract(TestFixtures.USDC_ADDRESS), "eip155:1", BigInteger("25000000"), 6, "USDC", "USDC")
         )
-        coEvery { portalManager.getBalances(eq(1), any()) } returns expected
+        coEvery { portalManager.getBalances(eq("eip155:1"), any()) } returns expected
 
-        val result = portalWalletProvider.getBalances(chainId = 1)
+        val result = portalWalletProvider.getBalances(chainId = "eip155:1")
 
         assertThat(result).isEqualTo(expected)
-        coVerify { portalManager.getBalances(1, any()) }
+        coVerify { portalManager.getBalances("eip155:1", any()) }
     }
 
     @Test
@@ -187,7 +187,7 @@ class PortalWalletProviderTest {
         )
 
         assertThrows(RainError.ProviderError::class.java) {
-            runBlocking { portalWalletProvider.getBalances(chainId = 1) }
+            runBlocking { portalWalletProvider.getBalances(chainId = "eip155:1") }
         }
     }
 
@@ -208,18 +208,18 @@ class PortalWalletProviderTest {
             )
         )
         coEvery {
-            portalManager.getTransactions(43114, 5, 2, RainTransactionOrder.DESC)
+            portalManager.getTransactions("eip155:43114", 5, 2, RainTransactionOrder.DESC)
         } returns expected
 
         val result = portalWalletProvider.getTransactions(
-            chainId = 43114,
+            chainId = "eip155:43114",
             limit = 5,
             offset = 2,
             order = RainTransactionOrder.DESC
         )
 
         assertThat(result).isSameInstanceAs(expected)
-        coVerify { portalManager.getTransactions(43114, 5, 2, RainTransactionOrder.DESC) }
+        coVerify { portalManager.getTransactions("eip155:43114", 5, 2, RainTransactionOrder.DESC) }
     }
 
     // ---- Signing + low-level sendTransaction + fee estimation -------------------
@@ -228,11 +228,11 @@ class PortalWalletProviderTest {
     fun `signTypedData delegates to PortalManager with chain + wallet + JSON`() = runBlocking {
         val expectedSig = "0x" + "1".repeat(130)
         coEvery {
-            portalManager.signTypedData(1, TestFixtures.WALLET_ADDRESS, """{"foo":"bar"}""")
+            portalManager.signTypedData("eip155:1", TestFixtures.WALLET_ADDRESS, """{"foo":"bar"}""")
         } returns expectedSig
 
         val signature = portalWalletProvider.signTypedData(
-            chainId = 1,
+            chainId = "eip155:1",
             walletAddress = TestFixtures.WALLET_ADDRESS,
             typedDataJson = """{"foo":"bar"}"""
         )
@@ -245,7 +245,7 @@ class PortalWalletProviderTest {
         val expectedHash = "0x" + "f".repeat(64)
         coEvery {
             portalManager.sendTransaction(
-                chainId = 1,
+                chainId = "eip155:1",
                 from = TestFixtures.WALLET_ADDRESS,
                 to = TestFixtures.CONTRACT_ADDRESS,
                 data = "0xdeadbeef",
@@ -254,7 +254,7 @@ class PortalWalletProviderTest {
         } returns expectedHash
 
         val txHash = portalWalletProvider.sendTransaction(
-            chainId = 1,
+            chainId = "eip155:1",
             from = TestFixtures.WALLET_ADDRESS,
             to = TestFixtures.CONTRACT_ADDRESS,
             data = "0xdeadbeef",
@@ -273,7 +273,7 @@ class PortalWalletProviderTest {
         assertThrows(RainError.TransactionSimulationFailed::class.java) {
             runBlocking {
                 portalWalletProvider.sendTransaction(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     from = TestFixtures.WALLET_ADDRESS,
                     to = TestFixtures.CONTRACT_ADDRESS,
                     data = "0x",
@@ -286,11 +286,11 @@ class PortalWalletProviderTest {
     @Test
     fun `estimateTransactionFee delegates to PortalManager`() = runBlocking {
         coEvery {
-            portalManager.estimateTransactionFee(1, TestFixtures.WALLET_ADDRESS, TestFixtures.CONTRACT_ADDRESS, "0x", "0x0")
+            portalManager.estimateTransactionFee("eip155:1", TestFixtures.WALLET_ADDRESS, TestFixtures.CONTRACT_ADDRESS, "0x", "0x0")
         } returns 0.00042
 
         val fee = portalWalletProvider.estimateTransactionFee(
-            chainId = 1,
+            chainId = "eip155:1",
             from = TestFixtures.WALLET_ADDRESS,
             to = TestFixtures.CONTRACT_ADDRESS,
             data = "0x",

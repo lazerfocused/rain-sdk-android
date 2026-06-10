@@ -7,8 +7,8 @@ package com.rain.sdk.models
  * `registerTokens(...)`.
  */
 data class TokenInfo(
-    /** EIP-155 chain ID. */
-    val chainId: Int,
+    /** CAIP-2 chain ID (e.g. `"eip155:1"`). */
+    val chainId: String,
 
     /** Token contract address. */
     val address: String,

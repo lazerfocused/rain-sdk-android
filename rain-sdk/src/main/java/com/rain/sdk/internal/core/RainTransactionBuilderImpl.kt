@@ -2,6 +2,7 @@ package com.rain.sdk.internal.core
 
 import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.interfaces.RainTransactionBuilder
+import com.rain.sdk.internal.utils.ChainIdFormat
 import com.rain.sdk.internal.utils.RainAmountUtils
 import com.rain.sdk.internal.utils.RainEip712Utils
 import com.rain.sdk.internal.config.RainConfig
@@ -81,7 +82,7 @@ internal object RainTransactionBuilderImpl : RainTransactionBuilder {
   }
 
   override suspend fun buildEIP712Message(
-    chainId: Int,
+    chainId: String,
     addresses: RainWithdrawAddresses,
     walletAddress: String,
     amount: Double,
@@ -107,9 +108,12 @@ internal object RainTransactionBuilderImpl : RainTransactionBuilder {
     // 3. Convert Amount to Base Units
     val amountBaseUnits = RainAmountUtils.toBaseUnits(amount, decimals)
 
-    // 4. Build EIP-712 JSON
+    // 4. Build EIP-712 JSON. The domain needs the numeric chain ID; only EVM signs EIP-712,
+    // so the CAIP-2 string is always `eip155:N` here.
+    val numericChainId = ChainIdFormat.EIP155.parse(chainId)
+      ?: throw RainError.InvalidConfig("EIP-712 requires an eip155 chain, got: $chainId")
     val jsonString = RainEip712Utils.createEIP712Json(
-      chainId = chainId.toLong(),
+      chainId = numericChainId.toLong(),
       verifyingContract = validatedAddresses.proxyAddress,
       saltHex = saltHex,
       walletAddress = validWallet,

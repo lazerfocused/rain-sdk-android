@@ -66,7 +66,7 @@ class RainSdkManagerTurnkeyTest {
         val manager = sdkManager as RainSdkManager
         val turnkey = mockTurnkey as com.rain.sdk.internal.provider.MockTurnkey
 
-        val chainId = 1
+        val chainId = "eip155:1"
         val rpcEndpoints = mapOf(chainId to "https://rpc.example/test")
 
         manager.initializeTurnkey(

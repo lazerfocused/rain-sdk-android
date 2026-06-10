@@ -6,7 +6,6 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rain.sdk.interfaces.RainClient
-import com.rain.sdk.RainChain
 import android.graphics.Bitmap
 import com.rain.sdk.models.RainAdminSignature
 import com.rain.sdk.models.Token
@@ -135,12 +134,12 @@ class SampleViewModel(
     if (sessionToken.isBlank()) return
 
     try {
-      val rpcConfig = mapOf(RainChain.AVALANCHE_TESTNET to "https://api.avax-test.network/ext/bc/C/rpc")
+      val rpcConfig = mapOf("eip155:43113" to "https://api.avax-test.network/ext/bc/C/rpc")
 
       rainClient.initializePortal(
         portalSessionToken = sessionToken,
         rpcEndpoints = rpcConfig,
-        chainId = RainChain.AVALANCHE_TESTNET
+        chainId = "eip155:43113"
       )
 
       isInitialized = rainClient.isInitialized
@@ -206,6 +205,7 @@ class SampleViewModel(
         val contract = contractResponse.result.getOrThrow()
 
         val chainId = contract.chainId.toInt()
+        val caip2ChainId = "eip155:$chainId"
         val tokenAddress = "0xD856a0585Da55e83d03ccb49Ef09D180494CfBAD"
         val amount = 0.1
         val decimals = 6
@@ -233,7 +233,7 @@ class SampleViewModel(
 
         // Step 1: Get transaction data without sending
         val withdrawResult = rainClient.withdrawCollateral(
-          chainId = chainId,
+          chainId = caip2ChainId,
           addresses = com.rain.sdk.models.RainWithdrawAddresses(
             proxyAddress = contract.address,
             controllerAddress = contract.controllerAddress,
@@ -261,7 +261,7 @@ class SampleViewModel(
         // Step 2: Estimate gas with transaction data
         val fromAddress = rainClient.getAddress()
         val fee = rainClient.estimateGas(
-          chainId = chainId,
+          chainId = caip2ChainId,
           from = fromAddress,
           to = contract.controllerAddress,
           data = transactionData
@@ -294,6 +294,7 @@ class SampleViewModel(
         val contract = contractResponse.result.getOrThrow()
 
         val chainId = contract.chainId.toInt()
+        val caip2ChainId = "eip155:$chainId"
         val tokenAddress = "0xD856a0585Da55e83d03ccb49Ef09D180494CfBAD" // USDC on Avalanche Testnet?
         val amount = 0.1
         val decimals = 6
@@ -323,7 +324,7 @@ class SampleViewModel(
         statusText = "Signature fetched! Processing withdrawal..."
 
         val result = rainClient.withdrawCollateral(
-          chainId = chainId,
+          chainId = caip2ChainId,
           addresses = RainWithdrawAddresses(
             proxyAddress = contract.address,
             controllerAddress = contract.controllerAddress,
@@ -378,7 +379,7 @@ class SampleViewModel(
     viewModelScope.launch {
       try {
         val result = rainClient.sendNativeToken(
-          chainId = RainChain.AVALANCHE_TESTNET,
+          chainId = "eip155:43113",
           toAddress = nativeRecipientAddress,
           amount = amountDouble
         )
@@ -407,7 +408,7 @@ class SampleViewModel(
     viewModelScope.launch {
       try {
         val result = rainClient.sendToken(
-          chainId = RainChain.AVALANCHE_TESTNET,
+          chainId = "eip155:43113",
           contractAddress = tokenContractAddress,
           toAddress = tokenRecipientAddress,
           amount = amountDouble,
@@ -427,9 +428,9 @@ class SampleViewModel(
     statusText = "Fetching balances..."
     viewModelScope.launch {
       try {
-        val nativeBalance = rainClient.getBalance(RainChain.AVALANCHE_TESTNET, Token.Native)
+        val nativeBalance = rainClient.getBalance("eip155:43113", Token.Native)
         val tokenAddress = tokenContractAddress.ifBlank { "0x5425890298aed601595a70AB815c96711a31Bc65" }
-        val erc20Balance = rainClient.getBalance(RainChain.AVALANCHE_TESTNET, Token.Contract(tokenAddress))
+        val erc20Balance = rainClient.getBalance("eip155:43113", Token.Contract(tokenAddress))
 
         statusText = """
           Balances fetched!
@@ -451,7 +452,7 @@ class SampleViewModel(
     viewModelScope.launch {
       try {
         val result = rainClient.getTransactions(
-          chainId = RainChain.AVALANCHE_TESTNET,
+          chainId = "eip155:43113",
           limit = 5 // Fetch only latest 5 for sample
         )
         statusText = "Transactions fetched successfully!"

@@ -37,16 +37,17 @@ interface RainClient {
      * Initializes the SDK with a Portal token and chain-specific RPC endpoints.
      *
      * @param portalSessionToken A valid Portal session token
-     * @param rpcEndpoints Map mapping numeric chain IDs to RPC URLs
-     * Example: mapOf(43114 to "https://avalanche-c-chain-rpc.publicnode.com")
-     * @param chainId Optional default Chain ID. If not provided, SDK will attempt to select a suitable one from rpcEndpoints.
+     * @param rpcEndpoints Map of CAIP-2 chain IDs to RPC URLs
+     * (https://standards.chainagnostic.org/CAIPs/caip-2).
+     * Example: mapOf("eip155:43114" to "https://avalanche-c-chain-rpc.publicnode.com")
+     * @param chainId Optional default CAIP-2 chain ID. If not provided, SDK will attempt to select a suitable one from rpcEndpoints.
      * @throws RainError if initialization fails
      */
     @Throws(RainError::class)
     fun initializePortal(
         portalSessionToken: String = "",
-        rpcEndpoints: Map<Int, String>,
-        chainId: Int? = null
+        rpcEndpoints: Map<String, String>,
+        chainId: String? = null
     )
 
     /**
@@ -57,8 +58,8 @@ interface RainClient {
      * complete login, then pass the singleton here to register it as Rain's wallet provider.
      *
      * @param turnkey The authenticated `TurnkeyContext` singleton.
-     * @param rpcEndpoints Map of numeric chain IDs to RPC URLs.
-     * @param chainId Optional default Chain ID. If not provided, SDK will select a suitable one from rpcEndpoints.
+     * @param rpcEndpoints Map of CAIP-2 chain IDs to RPC URLs (e.g. `"eip155:43114"`).
+     * @param chainId Optional default CAIP-2 chain ID. If not provided, SDK will select a suitable one from rpcEndpoints.
      * @param walletAddress Optional explicit EVM address override. When null, Rain uses the first
      *                      available Ethereum account from the Turnkey context.
      * @throws RainError if initialization fails (e.g., invalid RPC URLs or no usable EVM wallet).
@@ -66,8 +67,8 @@ interface RainClient {
     @Throws(RainError::class)
     suspend fun initializeTurnkey(
         turnkey: TurnkeyContext,
-        rpcEndpoints: Map<Int, String>,
-        chainId: Int? = null,
+        rpcEndpoints: Map<String, String>,
+        chainId: String? = null,
         walletAddress: String? = null
     )
 
@@ -85,7 +86,7 @@ interface RainClient {
      */
     @Throws(RainError::class)
     suspend fun withdrawCollateral(
-        chainId: Int,
+        chainId: String,
         addresses: RainWithdrawAddresses,
         amount: Double,
         decimals: Int,
@@ -104,15 +105,15 @@ interface RainClient {
 
     /**
      * Gets the wallet address for a specific chain. For EVM chains this matches [getAddress]
-     * (a hex address); for Solana chains (e.g. `RainChain.SOLANA_DEVNET`) it returns the
+     * (a hex address); for Solana chains (e.g. `"solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"`) it returns the
      * Turnkey Solana account's base58 address.
      *
-     * @param chainId The numeric chain ID (EVM chain ID, or a `RainChain.SOLANA_*` sentinel).
+     * @param chainId The CAIP-2 chain ID (e.g. `"eip155:1"`, or `"solana:<genesis>"`).
      * @return The wallet address for that chain's family.
      * @throws RainError if the address cannot be retrieved.
      */
     @Throws(RainError::class)
-    suspend fun getAddress(chainId: Int): String
+    suspend fun getAddress(chainId: String): String
 
     /**
      * Estimates the gas fee required for a transaction.
@@ -126,7 +127,7 @@ interface RainClient {
      */
     @Throws(RainError::class)
     suspend fun estimateGas(
-        chainId: Int,
+        chainId: String,
         from: String,
         to: String,
         data: String
@@ -142,7 +143,7 @@ interface RainClient {
      */
     @Throws(RainError::class)
     suspend fun sendNativeToken(
-        chainId: Int,
+        chainId: String,
         toAddress: String,
         amount: Double
     ): RainTokenTransferResult
@@ -159,7 +160,7 @@ interface RainClient {
      */
     @Throws(RainError::class)
     suspend fun sendToken(
-        chainId: Int,
+        chainId: String,
         contractAddress: String,
         toAddress: String,
         amount: Double,
@@ -169,25 +170,25 @@ interface RainClient {
     /**
      * Fetches a single balance (native or a contract token) for the current wallet.
      *
-     * @param chainId The numeric chain ID (e.g. 1 for Ethereum, 43114 for Avalanche).
+     * @param chainId The CAIP-2 chain ID (e.g. `"eip155:1"` for Ethereum, `"eip155:43114"` for Avalanche).
      * @param token [Token.Native] for the chain's gas currency, or [Token.Contract] for an
      *              ERC-20. Contract-address comparison is case-insensitive.
      * @return A [Balance] carrying the exact `rawAmount` plus resolved decimals / symbol / name.
      * @throws RainError if no wallet provider is set, or if the request fails.
      */
     @Throws(RainError::class)
-    suspend fun getBalance(chainId: Int, token: Token): Balance
+    suspend fun getBalance(chainId: String, token: Token): Balance
 
     /**
      * Fetches all non-zero balances for the current wallet on the given network. The native
      * balance is always included; zero-balance contract tokens are omitted.
      *
-     * @param chainId The numeric chain ID.
+     * @param chainId The CAIP-2 chain ID (e.g. `"eip155:1"`).
      * @return One [Balance] per non-zero token plus the native balance.
      * @throws RainError if no wallet provider is set, or if the request fails.
      */
     @Throws(RainError::class)
-    suspend fun getBalances(chainId: Int): List<Balance>
+    suspend fun getBalances(chainId: String): List<Balance>
 
     /**
      * Fetches balances across every chain the SDK was initialized with, in parallel,
@@ -237,7 +238,7 @@ interface RainClient {
     /**
      * Retrieves the transaction history for the specified chain.
      *
-     * @param chainId The numeric chain ID
+     * @param chainId The CAIP-2 chain ID (e.g. `"eip155:1"`)
      * @param limit Optional maximum number of transactions to return
      * @param offset Optional number of transactions to skip for pagination
      * @param order Optional sort order (ASC or DESC)
@@ -246,7 +247,7 @@ interface RainClient {
      */
     @Throws(RainError::class)
     suspend fun getTransactions(
-        chainId: Int,
+        chainId: String,
         limit: Int? = null,
         offset: Int? = null,
         order: RainTransactionOrder? = null

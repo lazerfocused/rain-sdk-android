@@ -20,26 +20,26 @@ internal class MockChainReader(
     var symbol: String? = null
 ) : ChainReader {
 
-    data class NativeCall(val chainId: Int, val walletAddress: String)
+    data class NativeCall(val chainId: String, val walletAddress: String)
     data class Erc20Call(
-        val chainId: Int,
+        val chainId: String,
         val tokenAddress: String,
         val walletAddress: String,
         val decimals: Int?
     )
     data class BalancesCall(
-        val chainId: Int,
+        val chainId: String,
         val walletAddress: String,
         val tokens: List<TokenInfo>
     )
     data class BalanceCall(
-        val chainId: Int,
+        val chainId: String,
         val walletAddress: String,
         val token: Token,
         val tokenInfo: TokenInfo?
     )
-    data class DecimalsCall(val chainId: Int, val tokenAddress: String)
-    data class SymbolCall(val chainId: Int, val tokenAddress: String)
+    data class DecimalsCall(val chainId: String, val tokenAddress: String)
+    data class SymbolCall(val chainId: String, val tokenAddress: String)
 
     val nativeCalls = mutableListOf<NativeCall>()
     val erc20Calls = mutableListOf<Erc20Call>()
@@ -48,13 +48,13 @@ internal class MockChainReader(
     val decimalsCalls = mutableListOf<DecimalsCall>()
     val symbolCalls = mutableListOf<SymbolCall>()
 
-    override suspend fun getNativeBalance(chainId: Int, walletAddress: String): Double {
+    override suspend fun getNativeBalance(chainId: String, walletAddress: String): Double {
         nativeCalls += NativeCall(chainId, walletAddress)
         return nativeBalance
     }
 
     override suspend fun getERC20Balance(
-        chainId: Int,
+        chainId: String,
         tokenAddress: String,
         walletAddress: String,
         decimals: Int?
@@ -64,7 +64,7 @@ internal class MockChainReader(
     }
 
     override suspend fun getBalances(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         tokens: List<TokenInfo>
     ): List<Balance> {
@@ -73,7 +73,7 @@ internal class MockChainReader(
     }
 
     override suspend fun getBalance(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         token: Token,
         tokenInfo: TokenInfo?
@@ -89,12 +89,12 @@ internal class MockChainReader(
         )
     }
 
-    override suspend fun getDecimals(chainId: Int, tokenAddress: String): Int {
+    override suspend fun getDecimals(chainId: String, tokenAddress: String): Int {
         decimalsCalls += DecimalsCall(chainId, tokenAddress)
         return decimals
     }
 
-    override suspend fun getSymbol(chainId: Int, tokenAddress: String): String? {
+    override suspend fun getSymbol(chainId: String, tokenAddress: String): String? {
         symbolCalls += SymbolCall(chainId, tokenAddress)
         return symbol
     }

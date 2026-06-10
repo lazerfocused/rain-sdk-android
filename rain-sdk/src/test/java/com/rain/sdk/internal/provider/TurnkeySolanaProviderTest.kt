@@ -249,7 +249,7 @@ class TurnkeySolanaProviderTest {
         assertThat(tx.to).isEqualTo(MockTurnkey.DEFAULT_SOLANA_RECIPIENT)
         assertThat(tx.value).isEqualTo("1")
         assertThat(tx.symbol).isEqualTo("SOL")
-        assertThat(tx.chainId).isEqualTo("103")
+        assertThat(tx.chainId).isEqualTo(devnetCaip2)
         // History is sourced from the SOL_SEND activity filter, not chain RPC.
         assertThat(client.getActivitiesCalls.single().filterByType)
             .containsExactly(com.turnkey.types.V1ActivityType.ACTIVITY_TYPE_SOL_SEND_TRANSACTION)

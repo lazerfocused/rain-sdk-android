@@ -22,7 +22,7 @@ internal interface WalletProvider {
      *
      * Defaults to [getAddress] so EVM-only providers (e.g. Portal) need no change.
      */
-    suspend fun getAddress(chainId: Int): String = getAddress()
+    suspend fun getAddress(chainId: String): String = getAddress()
 
     /**
      * Sends native token (e.g., AVAX).
@@ -33,7 +33,7 @@ internal interface WalletProvider {
      * @return The transaction hash of the transaction.
      */
     suspend fun sendNativeToken(
-        chainId: Int,
+        chainId: String,
         toAddress: String,
         amountInEth: Double
     ): String
@@ -49,7 +49,7 @@ internal interface WalletProvider {
      * @return The transaction hash.
      */
     suspend fun sendToken(
-        chainId: Int,
+        chainId: String,
         contractAddress: String,
         toAddress: String,
         amount: Double,
@@ -63,7 +63,7 @@ internal interface WalletProvider {
      * @param token [Token.Native] or a [Token.Contract].
      * @return A [Balance] with exact `rawAmount` plus resolved decimals / symbol / name.
      */
-    suspend fun getBalance(chainId: Int, token: Token): Balance
+    suspend fun getBalance(chainId: String, token: Token): Balance
 
     /**
      * Fetches all non-zero balances for the current wallet on the given network.
@@ -71,13 +71,13 @@ internal interface WalletProvider {
      * @param chainId The target blockchain network identifier.
      * @return One [Balance] per non-zero token plus the native balance (always included).
      */
-    suspend fun getBalances(chainId: Int): List<Balance>
+    suspend fun getBalances(chainId: String): List<Balance>
 
     /**
      * Gets the transaction history for the specified chain.
      */
     suspend fun getTransactions(
-        chainId: Int,
+        chainId: String,
         limit: Int? = null,
         offset: Int? = null,
         order: RainTransactionOrder? = null
@@ -92,7 +92,7 @@ internal interface WalletProvider {
      * @return The signature as a hex string (0x-prefixed)
      */
     suspend fun signTypedData(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         typedDataJson: String
     ): String
@@ -109,7 +109,7 @@ internal interface WalletProvider {
      * @return The transaction hash
      */
     suspend fun sendTransaction(
-        chainId: Int,
+        chainId: String,
         from: String,
         to: String,
         data: String,
@@ -127,7 +127,7 @@ internal interface WalletProvider {
      * @return Estimated fee in the chain's native token
      */
     suspend fun estimateTransactionFee(
-        chainId: Int,
+        chainId: String,
         from: String,
         to: String,
         data: String,

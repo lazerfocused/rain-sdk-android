@@ -3,7 +3,6 @@ package com.rain.sdk.sample.screens
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.rain.sdk.RainChain
 import com.rain.sdk.interfaces.RainClient
 import com.rain.sdk.models.RainAdminSignature
 import com.rain.sdk.models.RainWithdrawAddresses
@@ -157,7 +156,7 @@ class CollateralWithdrawViewModel(
                 )
 
                 val withdrawResult = rainClient.withdrawCollateral(
-                    chainId = RainChain.AVALANCHE_TESTNET,
+                    chainId = "eip155:43113",
                     addresses = addresses,
                     amount = amount,
                     decimals = token.decimals,
@@ -171,7 +170,7 @@ class CollateralWithdrawViewModel(
                 // 3. Estimate gas
                 val fromAddress = rainClient.getAddress()
                 val gas = rainClient.estimateGas(
-                    chainId = RainChain.AVALANCHE_TESTNET,
+                    chainId = "eip155:43113",
                     from = fromAddress,
                     to = current.controllerAddress,
                     data = txData
@@ -244,7 +243,7 @@ class CollateralWithdrawViewModel(
                 )
 
                 val result = rainClient.withdrawCollateral(
-                    chainId = RainChain.AVALANCHE_TESTNET,
+                    chainId = "eip155:43113",
                     addresses = addresses,
                     amount = amount,
                     decimals = token.decimals,

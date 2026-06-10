@@ -27,7 +27,7 @@ class TurnkeyWalletProviderRoutingTest {
 
     private fun makeProvider(
         chainReader: MockChainReader,
-        chainId: Int = 1
+        chainId: String = "eip155:1"
     ): TurnkeyWalletProvider {
         val turnkey = MockTurnkey()
         // The MockTurnkeyClient on `turnkey` returns no balances by default — fine for chain
@@ -61,13 +61,13 @@ class TurnkeyWalletProviderRoutingTest {
         )
         val provider = TurnkeyWalletProvider(
             turnkey = turnkey,
-            rpcEndpoints = mapOf(1 to "https://eth.example/rpc"),
+            rpcEndpoints = mapOf("eip155:1" to "https://eth.example/rpc"),
             walletAddressOverride = MockTurnkey.DEFAULT_WALLET_ADDRESS,
             httpClient = OkHttpClient(),
             chainReader = chainReader
         )
 
-        val balance = provider.getBalance(chainId = 1, token = Token.Native)
+        val balance = provider.getBalance(chainId = "eip155:1", token = Token.Native)
 
         assertThat(balance.decimalAmount.toDouble()).isWithin(1e-9).of(0.5)
         // Turnkey-supported chain shouldn't have touched the ChainReader at all.
@@ -79,16 +79,16 @@ class TurnkeyWalletProviderRoutingTest {
     @Test
     fun `getBalance native on Avalanche Fuji 43113 routes through ChainReader`() = runBlocking {
         val chainReader = MockChainReader(
-            balance = Balance(Token.Native, 43113, BigInteger("2500000000000000000"), 18, "AVAX", "Avalanche")
+            balance = Balance(Token.Native, "eip155:43113", BigInteger("2500000000000000000"), 18, "AVAX", "Avalanche")
         )
-        val provider = makeProvider(chainReader, chainId = 43113)
+        val provider = makeProvider(chainReader, chainId = "eip155:43113")
 
-        val balance = provider.getBalance(chainId = 43113, token = Token.Native)
+        val balance = provider.getBalance(chainId = "eip155:43113", token = Token.Native)
 
         assertThat(balance.decimalAmount.toDouble()).isWithin(1e-9).of(2.5)
         assertThat(chainReader.balanceCalls).hasSize(1)
         val call = chainReader.balanceCalls.single()
-        assertThat(call.chainId).isEqualTo(43113)
+        assertThat(call.chainId).isEqualTo("eip155:43113")
         assertThat(call.token).isEqualTo(Token.Native)
     }
 
@@ -98,14 +98,14 @@ class TurnkeyWalletProviderRoutingTest {
         val zero = "0x6b175474e89094c44da98b954eedeac495271d0f"
         val chainReader = MockChainReader(
             balances = listOf(
-                Balance(Token.Native, 43113, BigInteger("1000000000000000000"), 18, "AVAX", "Avalanche"),
-                Balance(Token.Contract(usdc), 43113, BigInteger("100000000"), 6, "USDC", "USDC"),
-                Balance(Token.Contract(zero), 43113, BigInteger.ZERO, 18, "ZERO", "Zero") // filtered out
+                Balance(Token.Native, "eip155:43113", BigInteger("1000000000000000000"), 18, "AVAX", "Avalanche"),
+                Balance(Token.Contract(usdc), "eip155:43113", BigInteger("100000000"), 6, "USDC", "USDC"),
+                Balance(Token.Contract(zero), "eip155:43113", BigInteger.ZERO, 18, "ZERO", "Zero") // filtered out
             )
         )
-        val provider = makeProvider(chainReader, chainId = 43113)
+        val provider = makeProvider(chainReader, chainId = "eip155:43113")
 
-        val balances = provider.getBalances(chainId = 43113)
+        val balances = provider.getBalances(chainId = "eip155:43113")
 
         // Native always kept; zero-balance contract dropped.
         assertThat(balances.map { it.token })
@@ -119,16 +119,16 @@ class TurnkeyWalletProviderRoutingTest {
     fun `getBalance contract always delegates to ChainReader, even on Turnkey-supported chains`() = runBlocking {
         val usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
         val chainReader = MockChainReader(
-            balance = Balance(Token.Contract(usdc), 1, BigInteger("42000000"), 6, "USDC", "USDC")
+            balance = Balance(Token.Contract(usdc), "eip155:1", BigInteger("42000000"), 6, "USDC", "USDC")
         )
-        val provider = makeProvider(chainReader, chainId = 1)
+        val provider = makeProvider(chainReader, chainId = "eip155:1")
 
-        val balance = provider.getBalance(chainId = 1, token = Token.Contract(usdc))
+        val balance = provider.getBalance(chainId = "eip155:1", token = Token.Contract(usdc))
 
         assertThat(balance.decimalAmount.toDouble()).isWithin(1e-9).of(42.0)
         assertThat(chainReader.balanceCalls).hasSize(1)
         val call = chainReader.balanceCalls.single()
-        assertThat(call.chainId).isEqualTo(1)
+        assertThat(call.chainId).isEqualTo("eip155:1")
         assertThat(call.token).isEqualTo(Token.Contract(usdc))
     }
 
@@ -146,7 +146,7 @@ class TurnkeyWalletProviderRoutingTest {
         }
         val provider = TurnkeyWalletProvider(
             turnkey = cached,
-            rpcEndpoints = mapOf(1 to "https://eth.example/rpc"),
+            rpcEndpoints = mapOf("eip155:1" to "https://eth.example/rpc"),
             httpClient = OkHttpClient(),
             chainReader = MockChainReader()
         )

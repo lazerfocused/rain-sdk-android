@@ -13,8 +13,8 @@ data class Balance(
     /** Which token this balance is for ([Token.Native] or a [Token.Contract]). */
     val token: Token,
 
-    /** EIP-155 chain ID the balance was read on. Keeps merged, cross-chain lists self-describing. */
-    val chainId: Int,
+    /** CAIP-2 chain ID the balance was read on. Keeps merged, cross-chain lists self-describing. */
+    val chainId: String,
 
     /** Exact balance in the token's smallest unit (e.g. wei for an 18-decimal token). */
     val rawAmount: BigInteger,

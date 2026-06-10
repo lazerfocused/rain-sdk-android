@@ -40,7 +40,7 @@ class TransactionCoordinatorTest {
 
   @Test
   fun `estimateGas delegates to walletProvider estimateTransactionFee`() = runBlocking {
-    val chainId = 1
+    val chainId = "eip155:1"
     val from = "0x123"
     val to = "0x456"
     val data = "0x789"

@@ -38,7 +38,7 @@ class RainSdkManagerSendTokenTest {
         assertThrows(RainError.SdkNotInitialized::class.java) {
             runBlocking {
                 manager.sendNativeToken(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     toAddress = TestFixtures.RECIPIENT_ADDRESS,
                     amount = 1.0
                 )
@@ -52,7 +52,7 @@ class RainSdkManagerSendTokenTest {
         assertThrows(RainError.SdkNotInitialized::class.java) {
             runBlocking {
                 manager.sendToken(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     contractAddress = TestFixtures.TOKEN_ADDRESS,
                     toAddress = TestFixtures.RECIPIENT_ADDRESS,
                     amount = 100.0,
@@ -71,7 +71,7 @@ class RainSdkManagerSendTokenTest {
         stub.sendNativeTokenHashToReturn = expectedHash
 
         val result = manager.sendNativeToken(
-            chainId = 1,
+            chainId = "eip155:1",
             toAddress = TestFixtures.RECIPIENT_ADDRESS,
             amount = 1.5
         )
@@ -79,7 +79,7 @@ class RainSdkManagerSendTokenTest {
         assertThat(result.transactionHash).isEqualTo(expectedHash)
         assertThat(stub.sendNativeTokenCalls).hasSize(1)
         val call = stub.sendNativeTokenCalls.single()
-        assertThat(call.chainId).isEqualTo(1)
+        assertThat(call.chainId).isEqualTo("eip155:1")
         assertThat(call.toAddress).isEqualTo(TestFixtures.RECIPIENT_ADDRESS)
         assertThat(call.amount).isEqualTo(1.5)
     }
@@ -91,7 +91,7 @@ class RainSdkManagerSendTokenTest {
         stub.sendTokenHashToReturn = expectedHash
 
         val result = manager.sendToken(
-            chainId = 1,
+            chainId = "eip155:1",
             contractAddress = TestFixtures.TOKEN_ADDRESS,
             toAddress = TestFixtures.RECIPIENT_ADDRESS,
             amount = 100.0,
@@ -101,7 +101,7 @@ class RainSdkManagerSendTokenTest {
         assertThat(result.transactionHash).isEqualTo(expectedHash)
         assertThat(stub.sendTokenCalls).hasSize(1)
         val call = stub.sendTokenCalls.single()
-        assertThat(call.chainId).isEqualTo(1)
+        assertThat(call.chainId).isEqualTo("eip155:1")
         assertThat(call.contractAddress).isEqualTo(TestFixtures.TOKEN_ADDRESS)
         assertThat(call.toAddress).isEqualTo(TestFixtures.RECIPIENT_ADDRESS)
         assertThat(call.amount).isEqualTo(100.0)
@@ -115,7 +115,7 @@ class RainSdkManagerSendTokenTest {
         assumeJdk24()
         val failing = object : StubWalletProvider() {
             override suspend fun sendNativeToken(
-                chainId: Int,
+                chainId: String,
                 toAddress: String,
                 amountInEth: Double
             ): String {
@@ -127,7 +127,7 @@ class RainSdkManagerSendTokenTest {
         val ex = runCatching {
             runBlocking {
                 manager.sendNativeToken(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     toAddress = TestFixtures.RECIPIENT_ADDRESS,
                     amount = 1.0
                 )
@@ -140,7 +140,7 @@ class RainSdkManagerSendTokenTest {
     fun `sendToken surfaces RainError unchanged when the provider already mapped it`() {
         val failing = object : StubWalletProvider() {
             override suspend fun sendToken(
-                chainId: Int,
+                chainId: String,
                 contractAddress: String,
                 toAddress: String,
                 amount: Double,
@@ -153,7 +153,7 @@ class RainSdkManagerSendTokenTest {
         assertThrows(RainError.InsufficientFunds::class.java) {
             runBlocking {
                 manager.sendToken(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     contractAddress = TestFixtures.TOKEN_ADDRESS,
                     toAddress = TestFixtures.RECIPIENT_ADDRESS,
                     amount = 100.0,

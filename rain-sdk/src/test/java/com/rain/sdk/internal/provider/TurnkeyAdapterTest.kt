@@ -43,7 +43,7 @@ class TurnkeyAdapterTest {
     private fun makeProvider(
         turnkey: MockTurnkey = MockTurnkey(),
         walletAddressOverride: String? = null,
-        chainId: Int = 1
+        chainId: String = "eip155:1"
     ): TurnkeyWalletProvider = TurnkeyWalletProvider(
         turnkey = turnkey,
         rpcEndpoints = mapOf(chainId to rpc.urlFor(chainId)),
@@ -71,7 +71,7 @@ class TurnkeyAdapterTest {
         val provider = makeProvider(turnkey)
 
         val txHash = provider.sendTransaction(
-            chainId = 1,
+            chainId = "eip155:1",
             from = MockTurnkey.DEFAULT_WALLET_ADDRESS,
             to = TestFixtures.RECIPIENT_ADDRESS,
             data = "0x",
@@ -95,7 +95,7 @@ class TurnkeyAdapterTest {
         val ex = runCatching {
             runBlocking {
                 provider.sendTransaction(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     from = MockTurnkey.DEFAULT_WALLET_ADDRESS,
                     to = TestFixtures.RECIPIENT_ADDRESS,
                     data = "0x",
@@ -120,7 +120,7 @@ class TurnkeyAdapterTest {
         val ex = runCatching {
             runBlocking {
                 provider.sendTransaction(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     from = MockTurnkey.DEFAULT_WALLET_ADDRESS,
                     to = TestFixtures.RECIPIENT_ADDRESS,
                     data = "0x",
@@ -144,7 +144,7 @@ class TurnkeyAdapterTest {
         val provider = makeProvider()
 
         val fee = provider.estimateTransactionFee(
-            chainId = 1,
+            chainId = "eip155:1",
             from = MockTurnkey.DEFAULT_WALLET_ADDRESS,
             to = TestFixtures.RECIPIENT_ADDRESS,
             data = "0x",
@@ -165,7 +165,7 @@ class TurnkeyAdapterTest {
         assertThrows(RainError.NetworkError::class.java) {
             runBlocking {
                 provider.estimateTransactionFee(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     from = MockTurnkey.DEFAULT_WALLET_ADDRESS,
                     to = TestFixtures.RECIPIENT_ADDRESS,
                     data = "0x",
@@ -184,7 +184,7 @@ class TurnkeyAdapterTest {
 
         val provider = makeProvider()
         val balance = provider.getBalance(
-            chainId = 1,
+            chainId = "eip155:1",
             token = Token.Contract(TestFixtures.USDC_ADDRESS)
         )
 
@@ -202,7 +202,7 @@ class TurnkeyAdapterTest {
         assertThrows(RainError.NetworkError::class.java) {
             runBlocking {
                 provider.getBalance(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     token = Token.Contract(TestFixtures.USDC_ADDRESS)
                 )
             }
@@ -218,9 +218,9 @@ class TurnkeyAdapterTest {
 
         // 43113 (Avalanche Fuji) is outside TURNKEY_SUPPORTED_CHAINS, so the balance read
         // falls through to the chain reader / RPC rather than the Turnkey indexer.
-        val provider = makeProvider(chainId = 43113)
+        val provider = makeProvider(chainId = "eip155:43113")
 
-        val balance = provider.getBalance(chainId = 43113, token = Token.Native)
+        val balance = provider.getBalance(chainId = "eip155:43113", token = Token.Native)
         assertThat(balance.decimalAmount.toDouble()).isWithin(1e-12).of(1.0)
         assertThat(rpc.recordedMethods).contains("eth_getBalance")
     }
@@ -234,7 +234,7 @@ class TurnkeyAdapterTest {
         assertThrows(RainError.TokenExpired::class.java) {
             runBlocking {
                 provider.sendTransaction(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     from = MockTurnkey.DEFAULT_WALLET_ADDRESS,
                     to = TestFixtures.RECIPIENT_ADDRESS,
                     data = "0x",
@@ -249,7 +249,7 @@ class TurnkeyAdapterTest {
         val turnkey = MockTurnkey(session = null)
         val provider = makeProvider(turnkey)
         assertThrows(RainError.TokenExpired::class.java) {
-            runBlocking { provider.getTransactions(chainId = 1) }
+            runBlocking { provider.getTransactions(chainId = "eip155:1") }
         }
     }
 
@@ -263,7 +263,7 @@ class TurnkeyAdapterTest {
         val provider = makeProvider(turnkey)
 
         val ex = runCatching {
-            runBlocking { provider.getTransactions(chainId = 1) }
+            runBlocking { provider.getTransactions(chainId = "eip155:1") }
         }.exceptionOrNull()
         // Bare provider exposes the underlying exception; RainSdkManager wraps via ErrorMapper.
         assertThat(ex).isInstanceOf(RuntimeException::class.java)
@@ -282,7 +282,7 @@ class TurnkeyAdapterTest {
         val ex = runCatching {
             runBlocking {
                 provider.signTypedData(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     walletAddress = MockTurnkey.DEFAULT_WALLET_ADDRESS,
                     typedDataJson = "{}"
                 )

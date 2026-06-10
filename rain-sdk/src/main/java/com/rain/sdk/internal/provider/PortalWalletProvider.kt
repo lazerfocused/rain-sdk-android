@@ -30,7 +30,7 @@ internal class PortalWalletProvider(
   }
 
   override suspend fun sendNativeToken(
-    chainId: Int,
+    chainId: String,
     toAddress: String,
     amountInEth: Double
   ): String {
@@ -48,7 +48,7 @@ internal class PortalWalletProvider(
   }
 
   override suspend fun sendToken(
-    chainId: Int,
+    chainId: String,
     contractAddress: String,
     toAddress: String,
     amount: Double,
@@ -77,16 +77,16 @@ internal class PortalWalletProvider(
     )
   }
 
-  override suspend fun getBalance(chainId: Int, token: Token): Balance {
+  override suspend fun getBalance(chainId: String, token: Token): Balance {
     return portalManager.getBalance(chainId, token, tokenStore)
   }
 
-  override suspend fun getBalances(chainId: Int): List<Balance> {
+  override suspend fun getBalances(chainId: String): List<Balance> {
     return portalManager.getBalances(chainId, tokenStore)
   }
 
   override suspend fun getTransactions(
-    chainId: Int,
+    chainId: String,
     limit: Int?,
     offset: Int?,
     order: RainTransactionOrder?
@@ -95,7 +95,7 @@ internal class PortalWalletProvider(
   }
 
   override suspend fun signTypedData(
-    chainId: Int,
+    chainId: String,
     walletAddress: String,
     typedDataJson: String
   ): String {
@@ -103,7 +103,7 @@ internal class PortalWalletProvider(
   }
 
   override suspend fun sendTransaction(
-    chainId: Int,
+    chainId: String,
     from: String,
     to: String,
     data: String,
@@ -113,7 +113,7 @@ internal class PortalWalletProvider(
   }
 
   override suspend fun estimateTransactionFee(
-    chainId: Int,
+    chainId: String,
     from: String,
     to: String,
     data: String,

@@ -31,7 +31,7 @@ class TurnkeyWalletProviderTest {
     private fun makeProvider(
         turnkey: MockTurnkey = MockTurnkey(),
         walletAddressOverride: String? = null,
-        rpcEndpoints: Map<Int, String> = mapOf(1 to "https://eth.example/rpc")
+        rpcEndpoints: Map<String, String> = mapOf("eip155:1" to "https://eth.example/rpc")
     ): TurnkeyWalletProvider = TurnkeyWalletProvider(
         turnkey = turnkey,
         rpcEndpoints = rpcEndpoints,
@@ -65,7 +65,7 @@ class TurnkeyWalletProviderTest {
         }
         val provider = TurnkeyWalletProvider(
             turnkey = withRefresh,
-            rpcEndpoints = mapOf(1 to "https://eth.example/rpc"),
+            rpcEndpoints = mapOf("eip155:1" to "https://eth.example/rpc"),
             walletAddressOverride = null,
             httpClient = OkHttpClient()
         )
@@ -89,7 +89,7 @@ class TurnkeyWalletProviderTest {
         val provider = makeProvider(turnkey = turnkey)
 
         val typed = """{"types":{}}"""
-        provider.signTypedData(chainId = 1, walletAddress = "0xabc", typedDataJson = typed)
+        provider.signTypedData(chainId = "eip155:1", walletAddress = "0xabc", typedDataJson = typed)
 
         assertThat(turnkey.signRawPayloadCalls).hasSize(1)
         val call = turnkey.signRawPayloadCalls.single()
@@ -110,7 +110,7 @@ class TurnkeyWalletProviderTest {
         )
         val provider = makeProvider(turnkey = turnkey)
 
-        val signature = provider.signTypedData(1, "0xabc", "{}")
+        val signature = provider.signTypedData("eip155:1", "0xabc", "{}")
 
         assertThat(signature).startsWith("0x")
         // 2 (prefix) + 64 (r) + 64 (s) + 2 (v) = 132
@@ -129,7 +129,7 @@ class TurnkeyWalletProviderTest {
         )
         val provider = makeProvider(turnkey = turnkey)
 
-        val signature = provider.signTypedData(1, "0xabc", "{}")
+        val signature = provider.signTypedData("eip155:1", "0xabc", "{}")
         assertThat(signature.takeLast(2)).isEqualTo("1b")
     }
 
@@ -159,7 +159,7 @@ class TurnkeyWalletProviderTest {
         turnkey.turnkeyClient = client
         val provider = makeProvider(turnkey = turnkey)
 
-        val balance = provider.getBalance(chainId = 1, token = Token.Native)
+        val balance = provider.getBalance(chainId = "eip155:1", token = Token.Native)
         assertThat(balance.token).isEqualTo(Token.Native)
         assertThat(balance.rawAmount).isEqualTo(java.math.BigInteger("1500000000000000000"))
         assertThat(balance.decimalAmount.toDouble()).isWithin(1e-9).of(1.5)
@@ -193,7 +193,7 @@ class TurnkeyWalletProviderTest {
         turnkey.turnkeyClient = client
         val provider = makeProvider(turnkey = turnkey)
 
-        val balances = provider.getBalances(chainId = 1)
+        val balances = provider.getBalances(chainId = "eip155:1")
         // Native + 2 ERC-20s.
         assertThat(balances).hasSize(3)
         assertThat(balances.any { it.token is Token.Native }).isTrue()
@@ -239,7 +239,7 @@ class TurnkeyWalletProviderTest {
         val provider = makeProvider(turnkey = turnkey)
 
         val result = provider.getTransactions(
-            chainId = 1,
+            chainId = "eip155:1",
             limit = 2,
             offset = 1,
             order = RainTransactionOrder.DESC
@@ -248,7 +248,7 @@ class TurnkeyWalletProviderTest {
         assertThat(result.transactions).hasSize(2)
         // DESC sort: newest first; act-5 has the largest seconds. With offset=1 we drop the newest,
         // so the visible window is act-4, act-3.
-        assertThat(result.transactions[0].chainId).isEqualTo("1")
+        assertThat(result.transactions[0].chainId).isEqualTo("eip155:1")
         assertThat(client.getActivitiesCalls).hasSize(1)
         assertThat(client.getActivitiesCalls.single().organizationId).isEqualTo(orgId)
     }
@@ -260,7 +260,7 @@ class TurnkeyWalletProviderTest {
         assertThrows(RainError.TokenExpired::class.java) {
             runBlocking {
                 provider.sendTransaction(
-                    chainId = 1,
+                    chainId = "eip155:1",
                     from = "0xabc",
                     to = "0xdef",
                     data = "0x",

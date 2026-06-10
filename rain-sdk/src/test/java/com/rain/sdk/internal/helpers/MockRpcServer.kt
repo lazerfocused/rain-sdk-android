@@ -75,7 +75,7 @@ internal class MockRpcServer {
      * Returns the server URL to use as the RPC endpoint for [chainId]. The wallet provider
      * just sends POSTs to this URL; the dispatcher routes them by JSON-RPC method.
      */
-    fun urlFor(chainId: Int): String = server.url("/v1/chain/$chainId").toString()
+    fun urlFor(chainId: String): String = server.url("/v1/chain/$chainId").toString()
 
     /** Stub a successful response for [method]. [result] is placed under the `result` key. */
     fun stub(method: String, result: String) {

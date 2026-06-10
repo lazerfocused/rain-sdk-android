@@ -16,22 +16,22 @@ import com.rain.sdk.models.TokenInfo
  * this interface so call sites don't fragment.
  *
  * Implementations exist per chain family. [EvmChainReader] covers all EIP-155 chains via
- * JSON-RPC. A future Solana/Stellar reader can implement this alongside it; until then,
- * `chainId: Int` matches the rest of the SDK's EVM-centric typing.
+ * JSON-RPC, and [SolanaChainReader] covers Solana clusters. `chainId` is the CAIP-2 string
+ * (e.g. `eip155:1`, `solana:<genesis>`) the SDK routes on everywhere.
  */
 internal interface ChainReader {
     /**
      * Native balance (e.g. ETH on Ethereum, AVAX on Avalanche). Result is in
      * human-readable form (e.g. `1.5` for 1.5 ETH).
      */
-    suspend fun getNativeBalance(chainId: Int, walletAddress: String): Double
+    suspend fun getNativeBalance(chainId: String, walletAddress: String): Double
 
     /**
      * Single ERC-20 balance via `balanceOf(address)`. [decimals] defaults to
      * [com.rain.sdk.interfaces.RainClient.Companion.DEFAULT_ERC20_DECIMALS] when null.
      */
     suspend fun getERC20Balance(
-        chainId: Int,
+        chainId: String,
         tokenAddress: String,
         walletAddress: String,
         decimals: Int?
@@ -46,7 +46,7 @@ internal interface ChainReader {
      *   retained (zero-filtering is the caller's responsibility).
      */
     suspend fun getBalances(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         tokens: List<TokenInfo>
     ): List<Balance>
@@ -58,18 +58,18 @@ internal interface ChainReader {
      *   name); ignored for [Token.Native]. When `null` for a contract token, defaults are used.
      */
     suspend fun getBalance(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         token: Token,
         tokenInfo: TokenInfo?
     ): Balance
 
     /** Reads an ERC-20 token's `decimals()`. Used to enrich tokens not in the registry. */
-    suspend fun getDecimals(chainId: Int, tokenAddress: String): Int
+    suspend fun getDecimals(chainId: String, tokenAddress: String): Int
 
     /**
      * Reads an ERC-20 token's `symbol()`. Returns `null` if the call reverts or returns an
      * undecodable payload. Used to enrich tokens not in the registry.
      */
-    suspend fun getSymbol(chainId: Int, tokenAddress: String): String?
+    suspend fun getSymbol(chainId: String, tokenAddress: String): String?
 }

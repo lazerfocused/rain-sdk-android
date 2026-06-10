@@ -12,7 +12,6 @@ import com.rain.sdk.internal.solana.SolanaRpcClient
 import com.rain.sdk.internal.solana.SolanaTransactionBuilder
 import com.rain.sdk.internal.solana.SolanaTransactionDecoder
 import com.rain.sdk.internal.tokenstore.TokenMetadataStore
-import com.rain.sdk.internal.utils.ChainIdFormat
 import com.rain.sdk.internal.utils.strippingHexPrefix
 import com.rain.sdk.models.Balance
 import com.rain.sdk.models.RainTransaction
@@ -58,7 +57,7 @@ import java.util.TimeZone
  */
 internal class TurnkeyWalletProvider(
     private val turnkey: TurnkeyContextProtocol,
-    private val rpcEndpoints: Map<Int, String>,
+    private val rpcEndpoints: Map<String, String>,
     private val walletAddressOverride: String? = null,
     private val httpClient: OkHttpClient = OkHttpClient(),
     private val pollingIntervalMs: Long = POLLING_INTERVAL_MS,
@@ -79,7 +78,7 @@ internal class TurnkeyWalletProvider(
         ?: SolanaChainReader(rpcEndpoints = rpcEndpoints, solanaRpcClient = this.solanaRpcClient)
 
     /** Picks the reader for [chainId]'s chain family. */
-    private fun chainReaderFor(chainId: Int): ChainReader =
+    private fun chainReaderFor(chainId: String): ChainReader =
         if (SolanaChains.isSolanaChain(chainId)) solanaChainReader else chainReader
 
     // Resolves token metadata (decimals / symbol / name) and enriches unknown tokens once.
@@ -112,18 +111,13 @@ internal class TurnkeyWalletProvider(
         val to: String,
         val value: String?,
         val data: String?,
-        val chainId: Int,
+        val chainId: String,
         val sendTransactionStatusId: String?
     )
 
     /** True when Turnkey's `get-balances` API covers [chainId] (EVM allowlist or any Solana cluster). */
-    private fun usesTurnkeyForBalances(chainId: Int): Boolean =
+    private fun usesTurnkeyForBalances(chainId: String): Boolean =
         chainId in RainConstants.TURNKEY_SUPPORTED_CHAINS || SolanaChains.isSolanaChain(chainId)
-
-    /** CAIP-2 for [chainId]: EIP-155 for EVM, genesis-hash form for Solana clusters. */
-    private fun caip2For(chainId: Int): String =
-        if (SolanaChains.isSolanaChain(chainId)) SolanaChains.caip2(chainId)
-        else ChainIdFormat.EIP155.format(chainId)
 
     // ---------- address ----------
 
@@ -149,7 +143,7 @@ internal class TurnkeyWalletProvider(
      * every other chain shares the Ethereum account. Internal balance / send paths use this so
      * a Solana request never reads or signs with the EVM address.
      */
-    override suspend fun getAddress(chainId: Int): String =
+    override suspend fun getAddress(chainId: String): String =
         if (SolanaChains.isSolanaChain(chainId)) getSolanaAddress() else getAddress()
 
     private suspend fun getSolanaAddress(): String {
@@ -184,7 +178,7 @@ internal class TurnkeyWalletProvider(
     // ---------- high-level send ----------
 
     override suspend fun sendNativeToken(
-        chainId: Int,
+        chainId: String,
         toAddress: String,
         amountInEth: Double
     ): String {
@@ -203,7 +197,7 @@ internal class TurnkeyWalletProvider(
     }
 
     override suspend fun sendToken(
-        chainId: Int,
+        chainId: String,
         contractAddress: String,
         toAddress: String,
         amount: Double,
@@ -234,7 +228,7 @@ internal class TurnkeyWalletProvider(
     // ---------- low-level send / sign / fee ----------
 
     override suspend fun sendTransaction(
-        chainId: Int,
+        chainId: String,
         from: String,
         to: String,
         data: String,
@@ -255,7 +249,7 @@ internal class TurnkeyWalletProvider(
     }
 
     override suspend fun signTypedData(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         typedDataJson: String
     ): String {
@@ -269,7 +263,7 @@ internal class TurnkeyWalletProvider(
     }
 
     override suspend fun estimateTransactionFee(
-        chainId: Int,
+        chainId: String,
         from: String,
         to: String,
         data: String,
@@ -293,7 +287,7 @@ internal class TurnkeyWalletProvider(
 
     // ---------- balances ----------
 
-    override suspend fun getBalance(chainId: Int, token: Token): Balance {
+    override suspend fun getBalance(chainId: String, token: Token): Balance {
         val walletAddress = getAddress(chainId)
 
         // Solana has its own balance policy (Turnkey-first with an RPC fallback for native SOL),
@@ -324,7 +318,7 @@ internal class TurnkeyWalletProvider(
                     )
                 } else {
                     val balances = fetchBalances(chainId, walletAddress)
-                    nativeBalance(chainId, balances, caip2For(chainId))
+                    nativeBalance(chainId, balances, chainId)
                 }
             }
         }
@@ -335,10 +329,10 @@ internal class TurnkeyWalletProvider(
      * RPC reader if the Turnkey call fails (the RPC reader can't read SPL, so contract tokens
      * surface the original error instead of falling back).
      */
-    private suspend fun solanaBalance(chainId: Int, walletAddress: String, token: Token): Balance =
+    private suspend fun solanaBalance(chainId: String, walletAddress: String, token: Token): Balance =
         runCatching {
             val balances = fetchBalances(chainId, walletAddress)
-            val caip2 = caip2For(chainId)
+            val caip2 = chainId
             when (token) {
                 is Token.Native -> nativeBalance(chainId, balances, caip2)
                 is Token.Contract -> splBalance(chainId, balances, caip2, token.address)
@@ -361,7 +355,7 @@ internal class TurnkeyWalletProvider(
      * so a missing mint yields a zero balance with whatever metadata we can recover.
      */
     private suspend fun splBalance(
-        chainId: Int,
+        chainId: String,
         balances: List<V1AssetBalance>,
         caip2: String,
         mint: String
@@ -371,7 +365,7 @@ internal class TurnkeyWalletProvider(
         return contractBalanceFrom(chainId, mint, raw, asset)
     }
 
-    override suspend fun getBalances(chainId: Int): List<Balance> {
+    override suspend fun getBalances(chainId: String): List<Balance> {
         val walletAddress = getAddress(chainId)
 
         if (!usesTurnkeyForBalances(chainId)) {
@@ -382,7 +376,7 @@ internal class TurnkeyWalletProvider(
             }
         }
 
-        val caip2 = caip2For(chainId)
+        val caip2 = chainId
         val balances =
             if (SolanaChains.isSolanaChain(chainId)) {
                 runCatching { fetchBalances(chainId, walletAddress) }.getOrElse {
@@ -413,7 +407,7 @@ internal class TurnkeyWalletProvider(
      * enrich (`getDecimals`/`getSymbol` throw) and would only cache misleading defaults.
      */
     private suspend fun contractBalanceFrom(
-        chainId: Int,
+        chainId: String,
         tokenAddress: String,
         raw: BigInteger,
         balance: V1AssetBalance?
@@ -444,7 +438,7 @@ internal class TurnkeyWalletProvider(
      * base units, so the string is parsed directly as [BigInteger] (no decimal reconstruction).
      */
     private suspend fun nativeBalance(
-        chainId: Int,
+        chainId: String,
         balances: List<V1AssetBalance>,
         caip2: String
     ): Balance {
@@ -464,7 +458,7 @@ internal class TurnkeyWalletProvider(
     // ---------- transactions ----------
 
     override suspend fun getTransactions(
-        chainId: Int,
+        chainId: String,
         limit: Int?,
         offset: Int?,
         order: RainTransactionOrder?
@@ -484,8 +478,7 @@ internal class TurnkeyWalletProvider(
 
         val drafts = activities.activities.mapNotNull { activity ->
             val intent = activity.intent.ethSendTransactionIntent ?: return@mapNotNull null
-            val txChainId = chainIdFromCaip2(intent.caip2)
-            if (txChainId != chainId) return@mapNotNull null
+            if (intent.caip2 != chainId) return@mapNotNull null
 
             val seconds = activity.createdAt.seconds.toDoubleOrNull() ?: 0.0
             val nanos = activity.createdAt.nanos.toDoubleOrNull() ?: 0.0
@@ -496,7 +489,7 @@ internal class TurnkeyWalletProvider(
                 to = intent.to,
                 value = intent.value,
                 data = intent.data,
-                chainId = txChainId,
+                chainId = intent.caip2,
                 sendTransactionStatusId = activity.result.ethSendTransactionResult?.sendTransactionStatusId
             )
         }
@@ -524,7 +517,7 @@ internal class TurnkeyWalletProvider(
                 value = decimalStringToDouble(draft.value, DEFAULT_NATIVE_DECIMALS).toString(),
                 gas = null,
                 gasPrice = null,
-                chainId = draft.chainId.toString(),
+                chainId = draft.chainId,
                 symbol = null,
                 tokenAddress = draft.to.takeIf { !draft.data.isNullOrEmpty() && draft.data != "0x" },
                 metadata = null
@@ -541,13 +534,12 @@ internal class TurnkeyWalletProvider(
      * and the row's hash is the Turnkey status id (not an explorer-resolvable signature).
      */
     private suspend fun getSolanaTransactions(
-        chainId: Int,
+        chainId: String,
         limit: Int?,
         offset: Int?,
         order: RainTransactionOrder?
     ): RainTransactionResult {
         val (session, client) = resolveSessionAndClient()
-        val caip2 = SolanaChains.caip2(chainId)
         val requestedLimit = minOf(maxOf(((limit ?: 10) + (offset ?: 0)), 1), 100)
         val activities = client.getActivities(
             TGetActivitiesBody(
@@ -559,7 +551,7 @@ internal class TurnkeyWalletProvider(
 
         val drafts = activities.activities.mapNotNull { activity ->
             val intent = activity.intent.solSendTransactionIntent ?: return@mapNotNull null
-            if (intent.caip2 != caip2) return@mapNotNull null
+            if (intent.caip2 != chainId) return@mapNotNull null
 
             val seconds = activity.createdAt.seconds.toDoubleOrNull() ?: 0.0
             val nanos = activity.createdAt.nanos.toDoubleOrNull() ?: 0.0
@@ -597,7 +589,7 @@ internal class TurnkeyWalletProvider(
                 value = value,
                 gas = null,
                 gasPrice = null,
-                chainId = chainId.toString(),
+                chainId = chainId,
                 symbol = symbol,
                 tokenAddress = null,
                 metadata = null
@@ -625,13 +617,13 @@ internal class TurnkeyWalletProvider(
         return session to client
     }
 
-    private suspend fun fetchBalances(chainId: Int, walletAddress: String): List<V1AssetBalance> {
+    private suspend fun fetchBalances(chainId: String, walletAddress: String): List<V1AssetBalance> {
         val (session, client) = resolveSessionAndClient()
         val response = client.getWalletAddressBalances(
             TGetWalletAddressBalancesBody(
                 organizationId = session.organizationId,
                 address = walletAddress,
-                caip2 = caip2For(chainId)
+                caip2 = chainId
             )
         )
         return response.balances.orEmpty()
@@ -639,7 +631,7 @@ internal class TurnkeyWalletProvider(
 
     private suspend fun buildSendTransactionBody(
         session: com.turnkey.core.models.Session,
-        chainId: Int,
+        chainId: String,
         from: String,
         to: String,
         data: String,
@@ -672,7 +664,7 @@ internal class TurnkeyWalletProvider(
 
         return TEthSendTransactionBody(
             organizationId = session.organizationId,
-            caip2 = ChainIdFormat.EIP155.format(chainId),
+            caip2 = chainId,
             data = data.ifEmpty { "0x" },
             from = from,
             gasLimit = gasLimit,
@@ -738,7 +730,7 @@ internal class TurnkeyWalletProvider(
     // ---------- Solana send ----------
 
     private suspend fun sendSolanaNative(
-        chainId: Int,
+        chainId: String,
         toAddress: String,
         amountInSol: Double
     ): String {
@@ -762,7 +754,7 @@ internal class TurnkeyWalletProvider(
                 unsignedTransaction = unsignedTransaction,
                 signWith = from,
                 sponsor = false,
-                caip2 = SolanaChains.caip2(chainId),
+                caip2 = chainId,
                 recentBlockhash = blockhash
             )
         )
@@ -838,7 +830,7 @@ internal class TurnkeyWalletProvider(
      * the caller gets the chain ID alongside the bad URL.
      */
     private suspend fun rpcCallForHex(
-        chainId: Int,
+        chainId: String,
         method: String,
         params: List<Any>
     ): String {
@@ -877,10 +869,6 @@ internal class TurnkeyWalletProvider(
         val prefixes = listOf("$caip2/erc20:", "$caip2/token:")
         if (prefixes.none { caip19.startsWith(it) }) return null
         return caip19.substringAfterLast(":", "").takeIf { it.isNotEmpty() }
-    }
-
-    private fun chainIdFromCaip2(caip2: String): Int {
-        return caip2.substringAfterLast(":", "").toIntOrNull() ?: 0
     }
 
     private fun decimalStringToDouble(balance: String?, decimals: Int): Double {

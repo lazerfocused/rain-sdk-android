@@ -91,7 +91,7 @@ internal class RainSdkManager(
    * `getAllBalances` to fan out across every configured chain.
    */
   @Volatile
-  private var configuredChainIds: List<Int> = emptyList()
+  private var configuredChainIds: List<String> = emptyList()
 
   /**
    * Installs a fake [WalletProvider] without going through `initializePortal` /
@@ -111,7 +111,7 @@ internal class RainSdkManager(
    * the chains the SDK was initialized with.
    */
   @androidx.annotation.VisibleForTesting
-  internal fun setConfiguredChainIdsForTest(chainIds: List<Int>) {
+  internal fun setConfiguredChainIdsForTest(chainIds: List<String>) {
     configuredChainIds = chainIds
   }
 
@@ -136,14 +136,14 @@ internal class RainSdkManager(
 
   override fun initializePortal(
     portalSessionToken: String,
-    rpcEndpoints: Map<Int, String>,
-    chainId: Int?,
+    rpcEndpoints: Map<String, String>,
+    chainId: String?,
   ) {
     try {
-      // Validate and setup RPC endpoints
-      val eip155RpcConfig = configManager.validateAndSetupRpcEndpoints(rpcEndpoints)
+      // Validate and setup RPC endpoints (CAIP-2 keyed throughout)
+      val rpcConfig = configManager.validateAndSetupRpcEndpoints(rpcEndpoints)
 
-      // Determine legacy chain ID
+      // Determine legacy chain ID (CAIP-2)
       val legacyChainId = configManager.determineLegacyChainId(chainId, rpcEndpoints)
 
       // Initialize Portal instance if token is provided
@@ -151,7 +151,7 @@ internal class RainSdkManager(
         portalManager.initialize(
           apiKey = portalSessionToken,
           legacyEthChainId = legacyChainId,
-          rpcConfig = eip155RpcConfig,
+          rpcConfig = rpcConfig,
           featureFlags = FeatureFlags(isMultiBackupEnabled = true),
           autoApprove = true
         )
@@ -184,8 +184,8 @@ internal class RainSdkManager(
 
   override suspend fun initializeTurnkey(
     turnkey: TurnkeyContext,
-    rpcEndpoints: Map<Int, String>,
-    chainId: Int?,
+    rpcEndpoints: Map<String, String>,
+    chainId: String?,
     walletAddress: String?
   ) {
     try {
@@ -230,7 +230,7 @@ internal class RainSdkManager(
   }
 
   override suspend fun withdrawCollateral(
-    chainId: Int,
+    chainId: String,
     addresses: RainWithdrawAddresses,
     amount: Double,
     decimals: Int,
@@ -266,7 +266,7 @@ internal class RainSdkManager(
   }
 
   override suspend fun estimateGas(
-    chainId: Int,
+    chainId: String,
     from: String,
     to: String,
     data: String
@@ -298,7 +298,7 @@ internal class RainSdkManager(
     }
   }
 
-  override suspend fun getAddress(chainId: Int): String {
+  override suspend fun getAddress(chainId: String): String {
     if (!isInitialized) {
       throw RainError.SdkNotInitialized()
     }
@@ -314,7 +314,7 @@ internal class RainSdkManager(
   }
 
   override suspend fun sendNativeToken(
-    chainId: Int,
+    chainId: String,
     toAddress: String,
     amount: Double
   ): RainTokenTransferResult {
@@ -336,7 +336,7 @@ internal class RainSdkManager(
   }
 
   override suspend fun sendToken(
-    chainId: Int,
+    chainId: String,
     contractAddress: String,
     toAddress: String,
     amount: Double,
@@ -359,7 +359,7 @@ internal class RainSdkManager(
     }
   }
 
-  override suspend fun getBalance(chainId: Int, token: Token): Balance {
+  override suspend fun getBalance(chainId: String, token: Token): Balance {
     if (!isInitialized) throw RainError.SdkNotInitialized()
     val provider = walletProvider ?: throw RainError.SdkNotInitialized()
     return try {
@@ -372,7 +372,7 @@ internal class RainSdkManager(
     }
   }
 
-  override suspend fun getBalances(chainId: Int): List<Balance> {
+  override suspend fun getBalances(chainId: String): List<Balance> {
     if (!isInitialized) throw RainError.SdkNotInitialized()
     val provider = walletProvider ?: throw RainError.SdkNotInitialized()
     return try {
@@ -448,7 +448,7 @@ internal class RainSdkManager(
   }
 
   override suspend fun getTransactions(
-    chainId: Int,
+    chainId: String,
     limit: Int?,
     offset: Int?,
     order: RainTransactionOrder?

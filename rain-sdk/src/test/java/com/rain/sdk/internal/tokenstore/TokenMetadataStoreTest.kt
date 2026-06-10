@@ -22,7 +22,7 @@ class TokenMetadataStoreTest {
         val reader = MockChainReader(decimals = 99, symbol = "WRONG")
         val store = TokenMetadataStore(reader)
 
-        val info = store.tokenInfo(chainId = 1, address = usdcEthereum)
+        val info = store.tokenInfo(chainId = "eip155:1", address = usdcEthereum)
 
         assertThat(info.symbol).isEqualTo("USDC")
         assertThat(info.decimals).isEqualTo(6)
@@ -36,9 +36,9 @@ class TokenMetadataStoreTest {
         val reader = MockChainReader(decimals = 8, symbol = "WBTC")
         val store = TokenMetadataStore(reader)
 
-        val first = store.tokenInfo(chainId = 1, address = unknown)
+        val first = store.tokenInfo(chainId = "eip155:1", address = unknown)
         // Second lookup with a different-cased address must hit the cache.
-        val second = store.tokenInfo(chainId = 1, address = unknown.lowercase())
+        val second = store.tokenInfo(chainId = "eip155:1", address = unknown.lowercase())
 
         assertThat(first.decimals).isEqualTo(8)
         assertThat(first.symbol).isEqualTo("WBTC")
@@ -53,10 +53,10 @@ class TokenMetadataStoreTest {
         val reader = MockChainReader(decimals = 8, symbol = "WBTC")
         val store = TokenMetadataStore(reader)
         store.register(
-            listOf(TokenInfo(chainId = 1, address = unknown, symbol = "HOST", decimals = 12, name = "Host Token"))
+            listOf(TokenInfo(chainId = "eip155:1", address = unknown, symbol = "HOST", decimals = 12, name = "Host Token"))
         )
 
-        val info = store.tokenInfo(chainId = 1, address = unknown)
+        val info = store.tokenInfo(chainId = "eip155:1", address = unknown)
 
         assertThat(info.symbol).isEqualTo("HOST")
         assertThat(info.decimals).isEqualTo(12)
@@ -67,10 +67,10 @@ class TokenMetadataStoreTest {
     @Test
     fun `registeredTokens returns registry tokens plus host registrations in order`() = runBlocking {
         val store = TokenMetadataStore(MockChainReader())
-        val host = TokenInfo(chainId = 1, address = unknown, symbol = "HOST", decimals = 12)
+        val host = TokenInfo(chainId = "eip155:1", address = unknown, symbol = "HOST", decimals = 12)
         store.register(listOf(host))
 
-        val tokens = store.registeredTokens(chainId = 1)
+        val tokens = store.registeredTokens(chainId = "eip155:1")
 
         assertThat(tokens).contains(host)
         // Registry first, host registrations appended.
@@ -80,10 +80,10 @@ class TokenMetadataStoreTest {
     @Test
     fun `seedTokens passed to the constructor are registered`() = runBlocking {
         val reader = MockChainReader(decimals = 8, symbol = "WBTC")
-        val seed = TokenInfo(chainId = 999, address = unknown, symbol = "SEED", decimals = 4)
+        val seed = TokenInfo(chainId = "eip155:999", address = unknown, symbol = "SEED", decimals = 4)
         val store = TokenMetadataStore(reader, seedTokens = listOf(seed))
 
-        val info = store.tokenInfo(chainId = 999, address = unknown)
+        val info = store.tokenInfo(chainId = "eip155:999", address = unknown)
 
         assertThat(info).isEqualTo(seed)
         assertThat(reader.decimalsCalls).isEmpty()
@@ -92,9 +92,9 @@ class TokenMetadataStoreTest {
     @Test
     fun `nativeCurrency resolves from the registry`() {
         val store = TokenMetadataStore(MockChainReader())
-        assertThat(store.nativeCurrency(43114).symbol).isEqualTo("AVAX")
-        assertThat(store.nativeCurrency(1).symbol).isEqualTo("ETH")
+        assertThat(store.nativeCurrency("eip155:43114").symbol).isEqualTo("AVAX")
+        assertThat(store.nativeCurrency("eip155:1").symbol).isEqualTo("ETH")
         // Unknown chain falls back to an ETH-like default.
-        assertThat(store.nativeCurrency(123456).symbol).isEqualTo("ETH")
+        assertThat(store.nativeCurrency("eip155:123456").symbol).isEqualTo("ETH")
     }
 }

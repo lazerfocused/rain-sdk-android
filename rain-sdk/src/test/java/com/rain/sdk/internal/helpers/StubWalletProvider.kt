@@ -16,7 +16,7 @@ import java.math.BigInteger
 internal open class StubWalletProvider : WalletProvider {
 
     data class SendTokenCall(
-        val chainId: Int,
+        val chainId: String,
         val contractAddress: String,
         val toAddress: String,
         val amount: Double,
@@ -24,25 +24,25 @@ internal open class StubWalletProvider : WalletProvider {
     )
 
     data class GetBalanceCall(
-        val chainId: Int,
+        val chainId: String,
         val token: Token
     )
 
     data class GetTransactionsCall(
-        val chainId: Int,
+        val chainId: String,
         val limit: Int?,
         val offset: Int?,
         val order: RainTransactionOrder?
     )
 
     data class SignTypedDataCall(
-        val chainId: Int,
+        val chainId: String,
         val walletAddress: String,
         val typedDataJson: String
     )
 
     data class SendTransactionCall(
-        val chainId: Int,
+        val chainId: String,
         val from: String,
         val to: String,
         val data: String,
@@ -50,7 +50,7 @@ internal open class StubWalletProvider : WalletProvider {
     )
 
     data class EstimateTransactionFeeCall(
-        val chainId: Int,
+        val chainId: String,
         val from: String,
         val to: String,
         val data: String,
@@ -60,7 +60,7 @@ internal open class StubWalletProvider : WalletProvider {
     var addressToReturn: String = TestFixtures.WALLET_ADDRESS
     var balanceToReturn: Balance = Balance(
         token = Token.Native,
-        chainId = 1,
+        chainId = "eip155:1",
         rawAmount = BigInteger.ZERO,
         decimals = 18,
         symbol = "ETH",
@@ -77,7 +77,7 @@ internal open class StubWalletProvider : WalletProvider {
     val sendNativeTokenCalls = mutableListOf<SendTokenCall>()
     val sendTokenCalls = mutableListOf<SendTokenCall>()
     val getBalanceCalls = mutableListOf<GetBalanceCall>()
-    val getBalancesCalls = mutableListOf<Int>()
+    val getBalancesCalls = mutableListOf<String>()
     val getTransactionsCalls = mutableListOf<GetTransactionsCall>()
     val signTypedDataCalls = mutableListOf<SignTypedDataCall>()
     val sendTransactionCalls = mutableListOf<SendTransactionCall>()
@@ -86,7 +86,7 @@ internal open class StubWalletProvider : WalletProvider {
     override suspend fun getAddress(): String = addressToReturn
 
     override suspend fun sendNativeToken(
-        chainId: Int,
+        chainId: String,
         toAddress: String,
         amountInEth: Double
     ): String {
@@ -101,7 +101,7 @@ internal open class StubWalletProvider : WalletProvider {
     }
 
     override suspend fun sendToken(
-        chainId: Int,
+        chainId: String,
         contractAddress: String,
         toAddress: String,
         amount: Double,
@@ -111,18 +111,18 @@ internal open class StubWalletProvider : WalletProvider {
         return sendTokenHashToReturn
     }
 
-    override suspend fun getBalance(chainId: Int, token: Token): Balance {
+    override suspend fun getBalance(chainId: String, token: Token): Balance {
         getBalanceCalls += GetBalanceCall(chainId, token)
         return balanceToReturn
     }
 
-    override suspend fun getBalances(chainId: Int): List<Balance> {
+    override suspend fun getBalances(chainId: String): List<Balance> {
         getBalancesCalls += chainId
         return balancesToReturn
     }
 
     override suspend fun getTransactions(
-        chainId: Int,
+        chainId: String,
         limit: Int?,
         offset: Int?,
         order: RainTransactionOrder?
@@ -132,7 +132,7 @@ internal open class StubWalletProvider : WalletProvider {
     }
 
     override suspend fun signTypedData(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         typedDataJson: String
     ): String {
@@ -141,7 +141,7 @@ internal open class StubWalletProvider : WalletProvider {
     }
 
     override suspend fun sendTransaction(
-        chainId: Int,
+        chainId: String,
         from: String,
         to: String,
         data: String,
@@ -152,7 +152,7 @@ internal open class StubWalletProvider : WalletProvider {
     }
 
     override suspend fun estimateTransactionFee(
-        chainId: Int,
+        chainId: String,
         from: String,
         to: String,
         data: String,

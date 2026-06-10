@@ -20,7 +20,7 @@ internal class RainConfig private constructor() {
     @Volatile
     private var _isInitialized: Boolean = false
     
-    private val rpcUrls = ConcurrentHashMap<Int, String>()
+    private val rpcUrls = ConcurrentHashMap<String, String>()
     
     /**
      * Checks if the SDK has been initialized.
@@ -31,24 +31,24 @@ internal class RainConfig private constructor() {
     
     /**
      * Registers an RPC endpoint for a specific chain.
-     * 
-     * @param chainId Chain ID (must be positive)
+     *
+     * @param chainId CAIP-2 chain ID (e.g. `"eip155:1"`)
      * @param url RPC endpoint URL (must be valid)
      * @throws IllegalArgumentException if chainId is invalid or URL is malformed
      */
-    fun setRpcUrl(chainId: Int, url: String) {
-        require(chainId > 0) { "Chain ID must be positive, got: $chainId" }
+    fun setRpcUrl(chainId: String, url: String) {
+        require(chainId.isNotBlank()) { "Chain ID must be non-blank" }
         require(URLUtil.isValidUrl(url)) { "Invalid RPC URL: $url" }
         rpcUrls[chainId] = url
     }
-    
+
     /**
      * Gets the RPC endpoint for a specific chain.
-     * 
-     * @param chainId Chain ID to look up
+     *
+     * @param chainId CAIP-2 chain ID to look up
      * @return RPC URL if configured, null otherwise
      */
-    fun getRpcUrl(chainId: Int): String? = rpcUrls[chainId]
+    fun getRpcUrl(chainId: String): String? = rpcUrls[chainId]
     
     /**
      * Marks the SDK as initialized.

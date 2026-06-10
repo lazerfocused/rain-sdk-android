@@ -27,7 +27,7 @@ internal class TransactionSigner(
      * @throws RainError if signing fails
      */
     suspend fun signTypedData(
-        chainId: Int,
+        chainId: String,
         walletAddress: String,
         typedDataJson: String
     ): String {
