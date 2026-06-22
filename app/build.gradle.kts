@@ -45,7 +45,9 @@ android {
 }
 
 dependencies {
-    implementation(project(":rain-sdk"))
+    implementation(project(":rain-core"))
+    // Portal demo path; a Turnkey-only sample would not need this.
+    implementation(project(":rain-portal"))
     
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

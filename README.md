@@ -14,15 +14,48 @@ Android SDK that integrates [Portal](https://portalhq.io) MPC wallet or [Turnkey
 - **Transaction history** — Get transactions for the current wallet with optional pagination and sort order.
 - **Send tokens** — Send native or ERC-20 tokens from the current wallet.
 
+## Modular architecture
+
+The SDK is split into a core module plus one module per wallet provider. A consumer links
+only what it uses:
+
+| Module | Maven coordinate | Contents |
+|--------|------------------|----------|
+| `:rain-core` | `xyz.rain:rain-core` | Rain domain (CST auth, collateral, tx orchestration, balances), the `WalletProvider` port + `ProviderId`/`Capability` + the provider registry, and the **Turnkey baseline** adapter. |
+| `:rain-portal` | `xyz.rain:rain-portal` | `PortalProvider` + `initializePortal`. Depends on `rain-core` + the Portal Android SDK. |
+| `:rain-privy` | `xyz.rain:rain-privy` | `PrivyProvider` scaffold (methods throw `NotImplemented`; no real Privy SDK yet). |
+
+Turnkey ships **inside** `rain-core` — it is Rain's auth/session backbone, not an optional
+wallet. So a Portal-only app also resolves Turnkey transitively (accepted by design).
+
+The adapter "construction kit" core exposes for sibling provider modules (chain reader, token
+metadata store, hex/amount helpers, error mapper) is `public` but annotated
+`@RestrictTo(LIBRARY_GROUP)` — Lint blocks app code from using it. App code uses the high-level
+`RainSdk` / `RainClient` surface only.
+
 ## Installation
 
-Add the dependency to your module's `build.gradle.kts`:
+Add the modules you need to your module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.rain.sdk:rain-sdk:1.0.0")
+    // Always: Rain domain + Turnkey baseline + the provider port/registry.
+    implementation("xyz.rain:rain-core:1.0.1")
+
+    // Add a provider module only if you use it (each pulls rain-core transitively):
+    implementation("xyz.rain:rain-portal:1.0.1") // Portal MPC wallet
+    implementation("xyz.rain:rain-privy:1.0.1")  // Privy (scaffold)
 }
 ```
+
+A Turnkey-only or wallet-agnostic integration needs **just `rain-core`**.
+
+> **Migrating from the single-module `com.rain.sdk:rain-sdk`:** Portal types and entry points
+> moved out of core. Add the `xyz.rain:rain-portal` dependency, then
+> `import com.rain.sdk.portal.initializePortal` (it is now a `RainClient` extension, not a
+> core method). Read the Portal instance from the `PortalProvider` you registered rather than
+> `RainSdk.getInstance().portal` (which no longer exists). Turnkey and wallet-agnostic
+> integrations are unchanged.
 
 ## Requirements
 
@@ -33,10 +66,14 @@ dependencies {
 
 ### 1. Initialize with Portal (full wallet flow)
 
-Use this when you want the SDK to use Portal for signing and sending transactions.
+Use this when you want the SDK to use Portal for signing and sending transactions. Requires
+the `xyz.rain:rain-portal` dependency.
 
 ```kotlin
 import com.rain.sdk.RainSdk
+import com.rain.sdk.internal.provider.ProviderId
+import com.rain.sdk.portal.PortalProvider
+import com.rain.sdk.portal.initializePortal   // RainClient extension from :rain-portal
 
 val client = RainSdk.getInstance().client
 
@@ -48,8 +85,8 @@ client.initializePortal(
     )
 )
 
-// Access the Portal instance when needed (e.g. for UI)
-val portal = RainSdk.getInstance().portal
+// Access the underlying Portal instance when needed (e.g. for UI):
+val portal = (client.provider(ProviderId.PORTAL) as PortalProvider).portal
 ```
 
 ### 2. Initialize with Turnkey (full wallet flow)

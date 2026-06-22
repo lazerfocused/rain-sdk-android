@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.rain.sdk.RainChain
 import com.rain.sdk.interfaces.RainClient
+import com.rain.sdk.portal.initializePortal
 import com.rain.sdk.sample.NetworkClient
 import com.rain.sdk.sample.SampleLog
 import com.rain.sdk.sample.TurnkeyAuthSample
