@@ -44,7 +44,7 @@ class TokenMetadataStoreTest {
     @Test
     fun `decimalsOrNull returns null rather than the 18-decimal default when the read fails`() =
         runBlocking {
-            // The whole point of this accessor: a transfer must never scale by a guessed 18.
+            // The whole point of this accessor: a transfer or approval must never scale by a guessed 18.
             val reader = MockChainReader(metadataError = RuntimeException("rpc down"))
             val store = TokenMetadataStore(reader)
 
