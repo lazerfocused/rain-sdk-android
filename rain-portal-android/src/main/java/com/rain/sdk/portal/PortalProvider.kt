@@ -17,6 +17,12 @@ import kotlinx.coroutines.flow.StateFlow
  * @param sessionToken A valid Portal session token (Portal API key).
  * @param chainId Optional default chain id for Portal's legacy single-chain operations. When null,
  *                Avalanche Mainnet is used if configured, otherwise the first configured chain.
+ * @param autoApprove Whether the adapter approves Portal's signing requests for the host. Defaults
+ *                    to `true`: every Rain call that signs is already an explicit, user-initiated
+ *                    SDK call, and Portal raises no UI of its own. Pass `false` only if the host
+ *                    gates signing itself — it must then handle
+ *                    `PortalEvents.PortalSigningRequested` and emit `PortalSigningApproved` on the
+ *                    Portal instance from `onPortalCreated`, or every signature hangs unanswered.
  * @param sessionPolicy Refresh, auth-guard and transient-retry behavior for every wallet call.
  * @param onSessionTokenNeeded Called when Portal rejects the token: return a fresh token for the
  *                             SAME Portal client (the SDK rebuilds the client and retries once), or
@@ -28,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 class PortalConfig(
     val sessionToken: String,
     val chainId: Int? = null,
+    val autoApprove: Boolean = true,
     val sessionPolicy: PortalSessionPolicy = PortalSessionPolicy(),
     val onSessionTokenNeeded: (suspend () -> String?)? = null,
     val onSessionExpired: (() -> Unit)? = null,
@@ -132,7 +139,7 @@ class PortalProvider internal constructor(
             legacyEthChainId = legacyChainId,
             rpcConfig = eip155RpcConfig,
             featureFlags = FeatureFlags(isMultiBackupEnabled = true),
-            autoApprove = true,
+            autoApprove = config.autoApprove,
         )
         portalManager = manager
         onPortalCreated?.invoke(manager.getPortalInstance())

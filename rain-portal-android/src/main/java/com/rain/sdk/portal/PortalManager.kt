@@ -103,21 +103,30 @@ internal class PortalManager {
       autoApprove = autoApprove
     )
 
-    // Setup auto-signing handler matching InitPortalUseCase logic
-    portal.on(PortalEvents.PortalSigningRequested) { data ->
-      Timber.d("Rain SDK: Auto-approving signing request")
-      if (nextScope.isActive) {
-        nextScope.launch {
-          portal.emit(PortalEvents.PortalSigningApproved, data)
+    // Portal raises no approval UI of its own: an unanswered PortalSigningRequested just hangs the
+    // signature. The handler is therefore registered unless the host opted out to gate signing
+    // itself, in which case answering the event is the host's job.
+    if (autoApprove) {
+      portal.on(PortalEvents.PortalSigningRequested) { data ->
+        Timber.d("Rain SDK: Auto-approving signing request")
+        if (nextScope.isActive) {
+          nextScope.launch {
+            portal.emit(PortalEvents.PortalSigningApproved, data)
+          }
         }
       }
+    } else {
+      Timber.w(
+        "Rain SDK: Portal autoApprove is disabled — the host must answer " +
+          "PortalSigningRequested or every signature will hang"
+      )
     }
 
     // Publish before retiring the old one so concurrent callers never see a gap.
     scope = nextScope
     _portal = portal
     previousScope.cancel()
-    Timber.d("Rain SDK: Portal initialized successfully with event handlers")
+    Timber.d("Rain SDK: Portal initialized (autoApprove=$autoApprove)")
   }
 
   /**

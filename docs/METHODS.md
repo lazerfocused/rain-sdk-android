@@ -170,18 +170,23 @@ Each adapter is a `RainProvider` descriptor that owns its vendor SDK as a privat
 
 | Adapter | Module | Config | Notes |
 |---------|--------|--------|-------|
-| `PortalProvider(PortalConfig(sessionToken, chainId?, sessionPolicy?, onSessionTokenNeeded?, onSessionExpired?))` | `rain-portal-android` | `sessionToken: String`, `chainId: Int?`, `sessionPolicy: PortalSessionPolicy`, `onSessionTokenNeeded: (suspend () -> String?)?`, `onSessionExpired: (() -> Unit)?` | Portal MPC signer (EVM). Advertises `EXPORT`, `RECOVERY`. See [PORTAL_SUPPORT.md](PORTAL_SUPPORT.md). |
+| `PortalProvider(PortalConfig(sessionToken, chainId?, autoApprove?, sessionPolicy?, onSessionTokenNeeded?, onSessionExpired?))` | `rain-portal-android` | `sessionToken: String`, `chainId: Int?`, `autoApprove: Boolean = true`, `sessionPolicy: PortalSessionPolicy`, `onSessionTokenNeeded: (suspend () -> String?)?`, `onSessionExpired: (() -> Unit)?` | Portal MPC signer (EVM). Advertises `EXPORT`, `RECOVERY`.|
 | `TurnkeyProvider(TurnkeyConfig(turnkey, walletAddress?, sessionPolicy?, onSessionExpired?))` | `rain-core-android` | `turnkey: TurnkeyContext`, `walletAddress: String?`, `sessionPolicy: TurnkeySessionPolicy`, `onSessionExpired: (() -> Unit)?` | Turnkey P256 signer (EVM + Solana). Advertises `MULTI_CHAIN`, `BIOMETRIC_GATE`. See [TURNKEY_SUPPORT.md](TURNKEY_SUPPORT.md). |
-| `PrivyProvider(PrivyConfig(privy, walletAddress?, sessionPolicy?, onSessionExpired?))` | `rain-privy-android` | `privy: Privy`, `walletAddress: String?`, `sessionPolicy: PrivySessionPolicy`, `onSessionExpired: (() -> Unit)?` | Privy embedded-wallet signer (EVM + Solana). Advertises `EXPORT`, `RECOVERY`, `MULTI_CHAIN`. See [PRIVY_SUPPORT.md](PRIVY_SUPPORT.md). |
+| `PrivyProvider(PrivyConfig(privy, walletAddress?, sessionPolicy?, onSessionExpired?))` | `rain-privy-android` | `privy: Privy`, `walletAddress: String?`, `sessionPolicy: PrivySessionPolicy`, `onSessionExpired: (() -> Unit)?` | Privy embedded-wallet signer (EVM + Solana). Advertises `EXPORT`, `RECOVERY`, `MULTI_CHAIN`.|
 
 #### Portal construction
 
-The adapter constructs the vendor `Portal` with `autoApprove = true`,
-`FeatureFlags(isMultiBackupEnabled = true)`, and an `eip155:<chainId> → rpcUrl` RPC config. Two
+The adapter constructs the vendor `Portal` with `autoApprove = PortalConfig.autoApprove`,
+`FeatureFlags(isMultiBackupEnabled = true)`, and an `eip155:<chainId> → rpcUrl` RPC config. Three
 vendor-shaped details are worth knowing:
 
 - **Storage backends.** portal-android registers backup storage at backup-call time, so the
   adapter passes none at construction.
+- **`autoApprove`.** Defaults to `true`, and the adapter also answers
+  `PortalEvents.PortalSigningRequested` with `PortalSigningApproved` while it is on. Every Rain call
+  that signs is already an explicit, user-initiated SDK call and Portal raises no approval UI of its
+  own, so an unanswered signing request simply hangs. Pass `false` only if the host gates signing
+  itself, and then answer the event on the `Portal` instance handed to `onPortalCreated`.
 - **`chainId`.** `PortalConfig.chainId` feeds portal-android's **required** `legacyEthChainId`
   constructor parameter, so the adapter must supply one; the field lets the host pick it instead of
   guessing. Omit it and the adapter falls back to Avalanche mainnet when configured, else the first
