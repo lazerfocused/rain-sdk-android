@@ -14,6 +14,7 @@ import io.mockk.verify
 import io.portalhq.android.Portal
 import io.portalhq.android.exceptions.PortalException
 import io.portalhq.android.mpc.data.FeatureFlags
+import io.portalhq.android.provider.data.PortalRequestMethod
 import io.portalhq.android.storage.mobile.PortalNamespace
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -203,8 +204,14 @@ class PortalProviderSessionTest {
         val hash = wallet.sendTransaction(43114, "0xfrom", "0xto", "0x", "0x0")
 
         assertThat(hash).isEqualTo("0xhash")
-        coVerify(exactly = 1) { dead.request(any(), any(), any(), null as io.portalhq.android.provider.data.RequestOptions?) }
-        coVerify(exactly = 2) { fresh.request(any(), any(), any(), null as io.portalhq.android.provider.data.RequestOptions?) }
+        // The dead client only ever saw the pre-flight; the rebuilt one ran the whole send
+        // pipeline exactly once. Asserting by method keeps read-only RPCs on the path
+        // (block-number reads for the AA hash scan) from being counted as retries.
+        val opts = null as io.portalhq.android.provider.data.RequestOptions?
+        coVerify(exactly = 1) { dead.request(any(), any(), any(), opts) }
+        coVerify(exactly = 1) { dead.request(any(), PortalRequestMethod.eth_call, any(), opts) }
+        coVerify(exactly = 1) { fresh.request(any(), PortalRequestMethod.eth_call, any(), opts) }
+        coVerify(exactly = 1) { fresh.request(any(), PortalRequestMethod.eth_sendTransaction, any(), opts) }
     }
 
     @Test
