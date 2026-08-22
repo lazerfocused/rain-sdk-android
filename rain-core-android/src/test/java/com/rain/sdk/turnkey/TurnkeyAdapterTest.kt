@@ -51,7 +51,9 @@ class TurnkeyAdapterTest {
         httpClient = OkHttpClient(),
         // Zero out the 1s production polling delay so retry-based tests run in milliseconds
         // and regressions in failure detection fail fast instead of hanging for 30s.
-        pollingIntervalMs = 0L
+        pollingIntervalMs = 0L,
+        // Indexed history fails like a feature-gated org, so these tests cover the activity path.
+        history = ThrowingTurnkeyHistory
     )
 
     // ---- Polling: pending → broadcasted -----------------------------------------

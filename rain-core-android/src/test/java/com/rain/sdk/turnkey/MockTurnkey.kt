@@ -166,6 +166,30 @@ internal class MockTurnkeyClient(
     }
 }
 
+/**
+ * History stub for tests that exercise the activity-log fallback: every indexed query fails
+ * the way it does for an org without the transaction history feature.
+ */
+internal object ThrowingTurnkeyHistory : TurnkeyHistoryProtocol {
+    override suspend fun listEthTransactionHistory(
+        organizationId: String,
+        sessionPublicKey: String,
+        address: String,
+        caip2: String,
+        limit: Int
+    ): TurnkeyEthHistoryResponse =
+        throw TurnkeyHistoryError(403, "transaction history feature is not enabled")
+
+    override suspend fun listSolTransactionHistory(
+        organizationId: String,
+        sessionPublicKey: String,
+        address: String,
+        caip2: String,
+        limit: Int
+    ): TurnkeySolHistoryResponse =
+        throw TurnkeyHistoryError(403, "transaction history feature is not enabled")
+}
+
 internal class MockTurnkey(
     override var wallets: List<Wallet> = listOf(defaultWallet()),
     override var session: Session? = defaultSession(),
