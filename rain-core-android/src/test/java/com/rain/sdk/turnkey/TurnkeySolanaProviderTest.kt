@@ -72,7 +72,9 @@ class TurnkeySolanaProviderTest {
             httpClient = OkHttpClient(),
             chainReader = evmReader,
             solanaChainReader = solanaReader,
-            pollingIntervalMs = 0L
+            pollingIntervalMs = 0L,
+            // Indexed history fails like a feature-gated org, so these tests cover the activity path.
+            history = ThrowingTurnkeyHistory
         )
     }
 

@@ -39,6 +39,7 @@ import com.turnkey.types.V1HashFunction
 import com.turnkey.types.V1Pagination
 import com.turnkey.types.V1PayloadEncoding
 import com.turnkey.types.V1SignRawPayloadResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -46,9 +47,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
+import timber.log.Timber
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.Instant
+import java.time.OffsetDateTime
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
@@ -71,7 +74,8 @@ internal class TurnkeyWalletProvider(
     solanaChainReader: ChainReader? = null,
     solanaRpcClient: SolanaRpcClient? = null,
     solanaSupport: SolanaSupport? = null,
-    tokenStore: TokenMetadataStore? = null
+    tokenStore: TokenMetadataStore? = null,
+    history: TurnkeyHistoryProtocol? = null
 ) : WalletProvider {
 
     override val id: ProviderId get() = ProviderId.TURNKEY
@@ -100,6 +104,8 @@ internal class TurnkeyWalletProvider(
     // Resolves token metadata (decimals / symbol / name) and enriches unknown tokens once.
     private val tokenStore: TokenMetadataStore = tokenStore ?: TokenMetadataStore(this.chainReader)
 
+    private val history: TurnkeyHistoryProtocol = history ?: TurnkeyHistoryClient(httpClient)
+
     // Once resolved, the wallet address is stable for the provider's lifetime, so cache
     // it. Mutex (rather than synchronized) so the suspend-friendly address() doesn't block
     // a thread while it's waiting on Turnkey's refresh.
@@ -118,6 +124,15 @@ internal class TurnkeyWalletProvider(
         // Turnkey returns a status id, not a Solana signature, so the signature is read back
         // from chain — which lags broadcast by a beat. Retry briefly before giving up.
         const val SOLANA_SIGNATURE_LOOKUP_ATTEMPTS = 8
+
+        /** Sort key for an indexed row with no mined block yet: newest, not 1970. */
+        const val PENDING_ROW_EPOCH = Double.MAX_VALUE
+
+        /** CAIP-19 asset namespace of a chain's native coin (ETH, SOL). */
+        const val NATIVE_ASSET_NAMESPACE = "slip44"
+
+        /** Widest plausible token scale (uint256 spans 78 digits); beyond this is hostile data. */
+        const val MAX_TOKEN_DECIMALS = 77
     }
 
     private data class ActivityDraft(
@@ -531,15 +546,257 @@ internal class TurnkeyWalletProvider(
 
     // ---------- transactions ----------
 
+    /**
+     * Transaction history. Turnkey's indexed history queries are the primary source, since they
+     * cover the wallet's full on-chain history (receives and externally-submitted transactions
+     * included). When the indexed query is unavailable, most commonly because the history feature
+     * is not enabled for the Turnkey organization, the provider falls back to the activity log,
+     * which lists only transactions sent through Turnkey.
+     */
     override suspend fun getTransactions(
         chainId: Int,
         limit: Int?,
         offset: Int?,
         order: RainTransactionOrder?
     ): List<RainTransaction> {
-        if (SolanaChains.isSolanaChain(chainId)) {
-            return getSolanaTransactions(chainId, limit, offset, order)
+        try {
+            return if (SolanaChains.isSolanaChain(chainId)) {
+                indexedSolanaTransactions(chainId, limit, offset, order)
+            } else {
+                indexedEvmTransactions(chainId, limit, offset, order)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RainError.TokenExpired) {
+            // The activity path needs the same session, so falling back would only fail again.
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "Rain SDK: Turnkey indexed history unavailable, falling back to activities")
         }
+        return if (SolanaChains.isSolanaChain(chainId)) {
+            getSolanaTransactionsFromActivities(chainId, limit, offset, order)
+        } else {
+            getEvmTransactionsFromActivities(chainId, limit, offset, order)
+        }
+    }
+
+    private suspend fun indexedEvmTransactions(
+        chainId: Int,
+        limit: Int?,
+        offset: Int?,
+        order: RainTransactionOrder?
+    ): List<RainTransaction> {
+        val session = turnkey.session ?: throw RainError.TokenExpired()
+        val walletAddress = getWalletAddress(chainId)
+        val response = history.listEthTransactionHistory(
+            organizationId = session.organizationId,
+            sessionPublicKey = session.publicKey,
+            address = walletAddress,
+            caip2 = caip2For(chainId),
+            limit = requestedHistoryLimit(limit, offset)
+        )
+        val rows = response.transactions.map { tx ->
+            rfc3339EpochSeconds(tx.block?.timestamp) to indexedTransaction(
+                chainId = chainId,
+                walletAddress = walletAddress,
+                hash = tx.transactionHash,
+                block = tx.block,
+                status = tx.status,
+                txFrom = tx.from,
+                txTo = tx.to,
+                transfer = tx.transfers.firstOrNull(),
+                sponsored = tx.turnkey?.sponsored
+            )
+        }
+        return sortAndSlice(rows, limit, offset, order)
+    }
+
+    private suspend fun indexedSolanaTransactions(
+        chainId: Int,
+        limit: Int?,
+        offset: Int?,
+        order: RainTransactionOrder?
+    ): List<RainTransaction> {
+        val session = turnkey.session ?: throw RainError.TokenExpired()
+        val walletAddress = getWalletAddress(chainId)
+        val response = history.listSolTransactionHistory(
+            organizationId = session.organizationId,
+            sessionPublicKey = session.publicKey,
+            address = walletAddress,
+            caip2 = caip2For(chainId),
+            limit = requestedHistoryLimit(limit, offset)
+        )
+        val rows = response.transactions.map { tx ->
+            rfc3339EpochSeconds(tx.block?.timestamp) to indexedTransaction(
+                chainId = chainId,
+                walletAddress = walletAddress,
+                hash = tx.signature,
+                block = tx.block,
+                status = tx.status,
+                txFrom = tx.feePayer,
+                txTo = null,
+                transfer = tx.transfers.firstOrNull(),
+                sponsored = tx.turnkey?.sponsored
+            )
+        }
+        return sortAndSlice(rows, limit, offset, order)
+    }
+
+    /**
+     * Maps one indexed history row onto the Rain model. The row's first transfer supplies the
+     * counterparty, asset and amount; any further transfers on the same transaction (a swap's
+     * received leg, a batch's other recipients) are not rendered as rows. A row without transfers
+     * (e.g. a plain contract call) keeps the transaction-level addresses and carries no amount.
+     */
+    private fun indexedTransaction(
+        chainId: Int,
+        walletAddress: String,
+        hash: String,
+        block: TurnkeyHistoryBlock?,
+        status: String?,
+        txFrom: String?,
+        txTo: String?,
+        transfer: TurnkeyHistoryTransfer?,
+        sponsored: Boolean?
+    ): RainTransaction {
+        val incoming = transfer?.direction.equals("IN", ignoreCase = true)
+        // Turnkey sends "" (not null) when the counterparty is unknown, Solana in particular.
+        val counterparty = transfer?.counterparty?.takeIf { it.isNotBlank() }
+        val asset = transfer?.asset?.caip19?.let { caip19Asset(it, caip2For(chainId)) }
+        val tokenAddress = asset?.takeIf { it.namespace != NATIVE_ASSET_NAMESPACE }?.reference
+        // Indexer-supplied; a value outside any real token's range must not scale the amount.
+        val decimals = transfer?.asset?.decimals?.takeIf { it in 0..MAX_TOKEN_DECIMALS }
+        val displayValues = buildMap {
+            transfer?.display?.crypto?.let { put("crypto", it) }
+            transfer?.display?.usd?.let { put("usd", it) }
+        }.takeIf { it.isNotEmpty() }
+
+        return RainTransaction(
+            hash = hash,
+            uniqueId = hash,
+            blockNumber = block?.number,
+            timestamp = normalizedTimestamp(block?.timestamp),
+            from = when {
+                transfer == null -> txFrom ?: walletAddress
+                incoming -> counterparty ?: txFrom ?: walletAddress
+                // OUT is relative to the queried address: the wallet is the sender even when the
+                // transaction-level `from` is a sponsor, relayer or bundler.
+                else -> walletAddress
+            },
+            to = when {
+                transfer == null -> txTo
+                incoming -> walletAddress
+                else -> counterparty ?: txTo
+            },
+            value = transfer?.amount?.let { amount ->
+                decimals?.let { scaledDecimal(amount, it) }
+            },
+            asset = transfer?.asset?.symbol,
+            tokenAddress = tokenAddress,
+            rawValue = transfer?.amount,
+            decimals = decimals,
+            category = indexedCategory(asset),
+            chainId = chainId,
+            metadata = RainTransaction.Metadata(
+                caip2 = caip2For(chainId),
+                status = indexerStatus(status),
+                sponsored = sponsored,
+                type = when {
+                    transfer == null -> null
+                    incoming -> "transferReceived"
+                    else -> "transferSent"
+                },
+                displayValues = displayValues
+            )
+        )
+    }
+
+    private data class Caip19Asset(val namespace: String, val reference: String)
+
+    /** Splits a CAIP-19 under [caip2] into asset namespace and reference; null when foreign. */
+    private fun caip19Asset(caip19: String, caip2: String): Caip19Asset? {
+        val rest = caip19.removePrefix("$caip2/")
+        if (rest == caip19) return null
+        val namespace = rest.substringBefore(':', "")
+        val reference = rest.substringAfter(':', "").substringBefore('/')
+        if (namespace.isEmpty() || reference.isEmpty()) return null
+        return Caip19Asset(namespace, reference)
+    }
+
+    private fun indexedCategory(asset: Caip19Asset?): RainTransactionCategory =
+        when (asset?.namespace) {
+            null, NATIVE_ASSET_NAMESPACE -> RainTransactionCategory.External
+            "erc20" -> RainTransactionCategory.Erc20
+            "erc721" -> RainTransactionCategory.Erc721
+            "erc1155" -> RainTransactionCategory.Erc1155
+            else -> RainTransactionCategory.Token
+        }
+
+    /** `EXECUTION_REVERTED` becomes `executionReverted`, matching the Privy rows' vocabulary. */
+    private fun indexerStatus(status: String?): String? {
+        val parts = status?.lowercase(Locale.ROOT)?.split('_')?.filter { it.isNotEmpty() }
+        if (parts.isNullOrEmpty()) return null
+        return parts.first() + parts.drop(1).joinToString("") { part ->
+            part.replaceFirstChar { it.uppercase(Locale.ROOT) }
+        }
+    }
+
+    /** Same fetch window as the activity path: enough rows to honor offset, capped by the API. */
+    private fun requestedHistoryLimit(limit: Int?, offset: Int?): Int =
+        minOf(maxOf((limit ?: 10) + (offset ?: 0), 1), 100)
+
+    private fun sortAndSlice(
+        rows: List<Pair<Double, RainTransaction>>,
+        limit: Int?,
+        offset: Int?,
+        order: RainTransactionOrder?
+    ): List<RainTransaction> {
+        // The API lists newest first; the index tiebreak keeps rows sharing a block timestamp in
+        // that order under DESC and reverses them under ASC, matching the timestamp semantics.
+        val indexed = rows.withIndex()
+        val sorted = when (order ?: RainTransactionOrder.DESC) {
+            RainTransactionOrder.ASC -> indexed.sortedWith(
+                compareBy<IndexedValue<Pair<Double, RainTransaction>>> { it.value.first }
+                    .thenByDescending { it.index }
+            )
+            RainTransactionOrder.DESC -> indexed.sortedWith(
+                compareByDescending<IndexedValue<Pair<Double, RainTransaction>>> { it.value.first }
+                    .thenBy { it.index }
+            )
+        }
+        return sorted
+            .drop(offset ?: 0)
+            .let { if (limit != null) it.take(limit) else it }
+            .map { it.value.second }
+    }
+
+    /**
+     * Epoch seconds for an RFC 3339 timestamp. A row without one (not mined yet, or a form the
+     * parser does not know) sorts as newest rather than 1970, so a pending send stays on the
+     * first page instead of being sliced off the end.
+     */
+    private fun rfc3339EpochSeconds(timestamp: String?): Double {
+        if (timestamp.isNullOrEmpty()) return PENDING_ROW_EPOCH
+        return runCatching { Instant.parse(timestamp) }
+            .recoverCatching { OffsetDateTime.parse(timestamp).toInstant() }
+            .mapCatching { it.toEpochMilli() / 1000.0 }
+            .getOrDefault(PENDING_ROW_EPOCH)
+    }
+
+    /** The indexer's timestamp reduced to the second-precision Zulu the activity path emits. */
+    private fun normalizedTimestamp(timestamp: String?): String? {
+        if (timestamp.isNullOrEmpty()) return null
+        val epoch = rfc3339EpochSeconds(timestamp)
+        return if (epoch == PENDING_ROW_EPOCH) timestamp else iso8601(epoch)
+    }
+
+    /** Activity-log history, used when the indexed query is unavailable. Sends only, no receives. */
+    private suspend fun getEvmTransactionsFromActivities(
+        chainId: Int,
+        limit: Int?,
+        offset: Int?,
+        order: RainTransactionOrder?
+    ): List<RainTransaction> {
         val (session, client) = resolveSessionAndClient()
         val requestedLimit = minOf(maxOf(((limit ?: 10) + (offset ?: 0)), 1), 100)
         val activities = client.getActivities(
@@ -601,13 +858,13 @@ internal class TurnkeyWalletProvider(
     }
 
     /**
-     * Solana transaction history, sourced from Turnkey activities (`ACTIVITY_TYPE_SOL_SEND_TRANSACTION`)
-     * for consistency with the EVM path — so it shows only transactions this wallet sent through
-     * Turnkey (no receives). Turnkey's Solana activity carries only the hex unsigned transaction
-     * (no recipient/amount) and no on-chain signature, so `to`/`value` are decoded from that blob
+     * Solana activity-log history (`ACTIVITY_TYPE_SOL_SEND_TRANSACTION`), used when the indexed
+     * query is unavailable. Shows only transactions this wallet sent through Turnkey (no
+     * receives). Turnkey's Solana activity carries only the hex unsigned transaction (no
+     * recipient/amount) and no on-chain signature, so `to`/`value` are decoded from that blob
      * and the row's hash is the Turnkey status id (not an explorer-resolvable signature).
      */
-    private suspend fun getSolanaTransactions(
+    private suspend fun getSolanaTransactionsFromActivities(
         chainId: Int,
         limit: Int?,
         offset: Int?,

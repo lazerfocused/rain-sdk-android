@@ -39,7 +39,9 @@ class TurnkeyWalletProviderTest {
         walletAddressOverride = walletAddressOverride,
         httpClient = OkHttpClient(),
         // Inject a mock reader so unknown-token enrichment never hits the network.
-        chainReader = MockChainReader()
+        chainReader = MockChainReader(),
+        // Indexed history fails like a feature-gated org, so these tests cover the activity path.
+        history = ThrowingTurnkeyHistory
     )
 
     @Test
