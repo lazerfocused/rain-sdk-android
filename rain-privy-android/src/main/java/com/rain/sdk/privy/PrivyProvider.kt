@@ -94,7 +94,7 @@ class PrivyProvider(
      * the SDK for a new login) so a stale provider stops observing the process-wide Privy
      * singleton and can never fire its expiry hook again.
      */
-    fun close() {
+    override fun close() {
         coordinator.stop()
         monitorScope.cancel()
     }

@@ -680,6 +680,7 @@ internal class PortalManager {
     )
   }
 
+  /** Tears the client down for good; idempotent. A destroyed manager cannot be reinitialized. */
   fun destroy() {
     scope.cancel()
     _portal = null

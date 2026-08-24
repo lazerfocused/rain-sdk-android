@@ -208,7 +208,7 @@ class PortalProviderSessionTest {
     }
 
     @Test
-    fun `close silences the expiry hook`() = runBlocking {
+    fun `close silences the expiry hook and tears the client down`() = runBlocking {
         val manager = managerBackedBy(mapOf("dead" to portalRejecting()))
         var expiredCalls = 0
         val provider = PortalProvider(
@@ -219,9 +219,12 @@ class PortalProviderSessionTest {
         val wallet = provider.create(context())
         provider.close()
 
-        assertThrows(RainError.TokenExpired::class.java) {
+        // close() destroys the Portal client, so calls fail as uninitialized rather than
+        // reaching Portal and being classified as an expired token.
+        assertThrows(RainError.SdkNotInitialized::class.java) {
             runBlocking { wallet.getWalletAddress() }
         }
+        assertThat(manager.isInitialized).isFalse()
         assertThat(expiredCalls).isEqualTo(0)
     }
 

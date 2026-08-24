@@ -26,4 +26,13 @@ interface RainProvider {
      * each rebuild it. May suspend — e.g. to probe that the vendor has a usable wallet.
      */
     suspend fun create(context: ProviderContext): WalletProvider
+
+    /**
+     * Releases everything this descriptor owns outside the returned [WalletProvider] — vendor
+     * clients, session watchers, host callbacks. Called by [com.rain.sdk.RainSdk.close]; must be
+     * idempotent, and is terminal: a closed descriptor is not re-registrable.
+     *
+     * Providers holding no such state need no override.
+     */
+    fun close() {}
 }

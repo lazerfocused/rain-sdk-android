@@ -70,6 +70,9 @@ class RainSdk private constructor(
     @Volatile
     private var rainApiService: RainApiService? = null
 
+    @Volatile
+    private var closed = false
+
     /**
      * Withdrawal-building primitives bound to this instance's endpoints. Instance-scoped, so two
      * SDKs configured differently never read each other's chain configuration.
@@ -211,6 +214,7 @@ class RainSdk private constructor(
      * @throws RainError.ProviderNotRegistered if no provider was registered for [id].
      */
     suspend fun provider(id: ProviderId): RainClient = mutex.withLock {
+        if (closed) throw RainError.SdkNotInitialized()
         clients[id]?.let { return it }
         val descriptor = registered[id]
             ?: throw RainError.ProviderNotRegistered("no provider registered for id '${id.value}'")
@@ -316,11 +320,16 @@ class RainSdk private constructor(
     }
 
     /**
-     * Tears down all resolved clients and clears the Rain API credentials. Idempotent.
+     * Evicts the resolved clients and clears the Rain API credentials. Idempotent.
      *
      * The chain configuration is immutable state fixed at [Builder.build], so this instance stays
      * usable: the next [provider] / [first] call re-resolves from scratch. Build a new [RainSdk]
      * via [builder] to change configuration.
+     *
+     * This deliberately leaves the registered providers running — their vendor clients and
+     * session watchers survive, so a re-resolve is cheap. On logout, or whenever this instance
+     * is being discarded, call [close] instead: reset alone leaves session watchers observing
+     * the process-wide vendor singletons and still able to fire `onSessionExpired`.
      */
     fun reset() {
         clients.values.forEach { runCatching { it.reset() } }
@@ -328,6 +337,20 @@ class RainSdk private constructor(
         rainApiConfig.clear()
         rainApiService = null
         Timber.d("Rain SDK: Reset (resolved clients evicted; Rain API credentials cleared)")
+    }
+
+    /**
+     * Full teardown: [reset], then closes every registered provider so their vendor clients and
+     * session watchers stop and their `onSessionExpired` hooks can never fire again. Idempotent.
+     *
+     * Terminal, unlike [reset] — [provider] and [first] throw afterwards. Build a new [RainSdk]
+     * via [builder] for the next login.
+     */
+    fun close() {
+        closed = true
+        reset()
+        registered.values.forEach { runCatching { it.close() } }
+        Timber.d("Rain SDK: Closed (providers torn down)")
     }
 
     companion object {

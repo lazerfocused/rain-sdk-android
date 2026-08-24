@@ -6,6 +6,7 @@ import com.turnkey.core.models.AuthState
 import com.turnkey.core.models.Session
 import com.turnkey.core.models.errors.TurnkeyKotlinError
 import java.io.IOException
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -28,9 +29,9 @@ import timber.log.Timber
  * in `RainSessionStore`/`RainApiService.withCst`, adapted to Turnkey's externally-owned
  * session.
  *
- * Terminal auth failures always surface as [RainError.TokenExpired] and fire the host's
- * `onSessionExpired` hook once per session death; the hook re-arms when a live session is
- * seen again.
+ * Terminal auth failures always surface as [RainError.TokenExpired] and fire the death
+ * callbacks plus the host's `onSessionExpired` hook once per session death; both re-arm when a
+ * live session is seen again.
  */
 internal class TurnkeySessionCoordinator(
     private val turnkey: TurnkeyContextProtocol,
@@ -46,6 +47,14 @@ internal class TurnkeySessionCoordinator(
 
     /** Whether a session was ever observed — only an existing session can "die". */
     private val sawSession = AtomicBoolean(false)
+
+    /** Runs when an active session dies (before the host hook) — e.g. cached-account eviction. */
+    private val deathCallbacks = CopyOnWriteArrayList<() -> Unit>()
+
+    /** Registers a callback invoked once per session death, before the host hook. */
+    fun onSessionDeath(callback: () -> Unit) {
+        deathCallbacks += callback
+    }
 
     /** Snapshot of the session state as seen right now. */
     fun currentState(): TurnkeySessionState =
@@ -252,14 +261,20 @@ internal class TurnkeySessionCoordinator(
     }
 
     private fun notifyExpired() {
-        val hook = onSessionExpired ?: return
         // A closed coordinator belongs to a discarded provider — it must never notify.
         if (stopped.get()) return
         // Never logged in is not a session death: only notify once a session has been seen.
         if (!sawSession.get()) return
         if (!expiryNotified.compareAndSet(false, true)) return
-        runCatching { hook() }
-            .onFailure { Timber.w(it, "Rain SDK: onSessionExpired callback threw") }
+        // Internal listeners first: they evict state the host hook may immediately re-read.
+        deathCallbacks.forEach { callback ->
+            runCatching { callback() }
+                .onFailure { Timber.w(it, "Rain SDK: session-death callback threw") }
+        }
+        onSessionExpired?.let { hook ->
+            runCatching { hook() }
+                .onFailure { Timber.w(it, "Rain SDK: onSessionExpired callback threw") }
+        }
     }
 
     private fun deriveState(auth: AuthState, session: Session?): TurnkeySessionState = when {

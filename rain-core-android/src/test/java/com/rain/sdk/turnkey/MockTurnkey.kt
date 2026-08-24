@@ -243,8 +243,12 @@ internal class MockTurnkey(
     /** Runs after a recorded [refreshSession] call — install the refreshed session here. */
     var onRefreshSession: (() -> Unit)? = null
 
+    /** Runs after a recorded [refreshWallets] call — install the fetched wallets here. */
+    var onRefreshWallets: (suspend () -> Unit)? = null
+
     override suspend fun refreshWallets() {
         refreshWalletsCallCount++
+        onRefreshWallets?.invoke()
     }
 
     override suspend fun refreshSession(expirationSeconds: String?) {
@@ -310,6 +314,11 @@ internal class MockTurnkey(
                 )
             )
         )
+
+        /** [defaultWallet] re-addressed — stands in for a different user's Turnkey wallet. */
+        fun walletWithEthereumAddress(address: String): Wallet = defaultWallet().let { wallet ->
+            wallet.copy(accounts = wallet.accounts.map { it.copy(address = address) })
+        }
 
         /** A Turnkey wallet account in Solana (ed25519) format. */
         fun solanaAccount(address: String = DEFAULT_SOLANA_ADDRESS): V1WalletAccount =
