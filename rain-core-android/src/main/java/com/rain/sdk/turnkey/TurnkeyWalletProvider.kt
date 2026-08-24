@@ -75,7 +75,8 @@ internal class TurnkeyWalletProvider(
     solanaRpcClient: SolanaRpcClient? = null,
     solanaSupport: SolanaSupport? = null,
     tokenStore: TokenMetadataStore? = null,
-    history: TurnkeyHistoryProtocol? = null
+    history: TurnkeyHistoryProtocol? = null,
+    sessionCoordinator: TurnkeySessionCoordinator? = null
 ) : WalletProvider {
 
     override val id: ProviderId get() = ProviderId.TURNKEY
@@ -105,6 +106,10 @@ internal class TurnkeyWalletProvider(
     private val tokenStore: TokenMetadataStore = tokenStore ?: TokenMetadataStore(this.chainReader)
 
     private val history: TurnkeyHistoryProtocol = history ?: TurnkeyHistoryClient(httpClient)
+
+    // Guards every Turnkey call: expiry check, proactive refresh, refresh-on-401, backoff.
+    private val sessions: TurnkeySessionCoordinator =
+        sessionCoordinator ?: TurnkeySessionCoordinator(turnkey)
 
     // Once resolved, the wallet address is stable for the provider's lifetime, so cache
     // it. Mutex (rather than synchronized) so the suspend-friendly address() doesn't block
@@ -166,7 +171,9 @@ internal class TurnkeyWalletProvider(
 
             resolveEthereumWalletAddress(turnkey.wallets)?.also { cachedAddress = it }
                 ?: run {
-                    turnkey.refreshWallets()
+                    // Session-guarded: an expired session surfaces as TokenExpired here rather
+                    // than as the vendor's raw refresh-wallets failure.
+                    sessions.executeRead { _, _ -> turnkey.refreshWallets() }
                     resolveEthereumWalletAddress(turnkey.wallets)?.also { cachedAddress = it }
                         ?: throw RainError.WalletUnavailable("No Ethereum wallet available from Turnkey context")
                 }
@@ -189,7 +196,7 @@ internal class TurnkeyWalletProvider(
 
             resolveSolanaWalletAddress(turnkey.wallets)?.also { cachedSolanaAddress = it }
                 ?: run {
-                    turnkey.refreshWallets()
+                    sessions.executeRead { _, _ -> turnkey.refreshWallets() }
                     resolveSolanaWalletAddress(turnkey.wallets)?.also { cachedSolanaAddress = it }
                         ?: throw RainError.WalletUnavailable("No Solana wallet available from Turnkey context")
                 }
@@ -264,19 +271,19 @@ internal class TurnkeyWalletProvider(
         value: String
     ): String {
         requireEvmChain(chainId, "sendTransaction")
-        val (session, client) = resolveSessionAndClient()
-        val sendBody = buildSendTransactionBody(
-            session = session,
-            chainId = chainId,
-            from = from,
-            to = to,
-            data = data,
-            value = value
-        )
-
-        val response = client.ethSendTransaction(sendBody)
-        val statusId = response.result.sendTransactionStatusId
-        return pollForTransactionHash(client, session.organizationId, statusId)
+        // The body is rebuilt on a refresh-and-retry so the nonce and gas quotes stay fresh.
+        val statusId = sessions.executeWrite { session, client ->
+            val sendBody = buildSendTransactionBody(
+                session = session,
+                chainId = chainId,
+                from = from,
+                to = to,
+                data = data,
+                value = value
+            )
+            client.ethSendTransaction(sendBody).result.sendTransactionStatusId
+        }
+        return pollForTransactionHash(statusId)
     }
 
     override suspend fun signTypedData(
@@ -285,12 +292,14 @@ internal class TurnkeyWalletProvider(
         typedDataJson: String
     ): String {
         requireEvmChain(chainId, "signTypedData")
-        val signature = turnkey.signRawPayload(
-            signWith = walletAddress,
-            payload = typedDataJson,
-            encoding = V1PayloadEncoding.PAYLOAD_ENCODING_EIP712,
-            hashFunction = V1HashFunction.HASH_FUNCTION_NO_OP
-        )
+        val signature = sessions.executeWrite { _, _ ->
+            turnkey.signRawPayload(
+                signWith = walletAddress,
+                payload = typedDataJson,
+                encoding = V1PayloadEncoding.PAYLOAD_ENCODING_EIP712,
+                hashFunction = V1HashFunction.HASH_FUNCTION_NO_OP
+            )
+        }
         return ethereumSignatureHex(signature)
     }
 
@@ -372,6 +381,10 @@ internal class TurnkeyWalletProvider(
                 is Token.Contract -> splBalance(chainId, walletAddress, balances, caip2, token.address)
             }
         }.getOrElse {
+            if (it is CancellationException) throw it
+            // A dead session must surface, not be masked by the node fallback — the coordinator
+            // already tried a refresh before this error was thrown.
+            if (it is RainError.TokenExpired) throw it
             chainReaderFor(chainId).getBalance(
                 chainId = chainId,
                 walletAddress = walletAddress,
@@ -453,7 +466,16 @@ internal class TurnkeyWalletProvider(
      */
     private suspend fun solanaBalances(chainId: Int, walletAddress: String): List<Balance> {
         val caip2 = caip2For(chainId)
-        val turnkeyAssets = runCatching { fetchBalances(chainId, walletAddress) }.getOrNull()
+        val turnkeyAssets = try {
+            fetchBalances(chainId, walletAddress)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RainError.TokenExpired) {
+            // A dead session must surface, not be masked by the node fallback.
+            throw e
+        } catch (_: Exception) {
+            null
+        }
         val listsSplAssets = turnkeyAssets.orEmpty().any {
             tokenAddressFromCaip19(it.caip19 ?: "", caip2) != null
         }
@@ -586,15 +608,16 @@ internal class TurnkeyWalletProvider(
         offset: Int?,
         order: RainTransactionOrder?
     ): List<RainTransaction> {
-        val session = turnkey.session ?: throw RainError.TokenExpired()
         val walletAddress = getWalletAddress(chainId)
-        val response = history.listEthTransactionHistory(
-            organizationId = session.organizationId,
-            sessionPublicKey = session.publicKey,
-            address = walletAddress,
-            caip2 = caip2For(chainId),
-            limit = requestedHistoryLimit(limit, offset)
-        )
+        val response = sessions.executeRead { session, _ ->
+            history.listEthTransactionHistory(
+                organizationId = session.organizationId,
+                sessionPublicKey = session.publicKey,
+                address = walletAddress,
+                caip2 = caip2For(chainId),
+                limit = requestedHistoryLimit(limit, offset)
+            )
+        }
         val rows = response.transactions.map { tx ->
             rfc3339EpochSeconds(tx.block?.timestamp) to indexedTransaction(
                 chainId = chainId,
@@ -617,15 +640,16 @@ internal class TurnkeyWalletProvider(
         offset: Int?,
         order: RainTransactionOrder?
     ): List<RainTransaction> {
-        val session = turnkey.session ?: throw RainError.TokenExpired()
         val walletAddress = getWalletAddress(chainId)
-        val response = history.listSolTransactionHistory(
-            organizationId = session.organizationId,
-            sessionPublicKey = session.publicKey,
-            address = walletAddress,
-            caip2 = caip2For(chainId),
-            limit = requestedHistoryLimit(limit, offset)
-        )
+        val response = sessions.executeRead { session, _ ->
+            history.listSolTransactionHistory(
+                organizationId = session.organizationId,
+                sessionPublicKey = session.publicKey,
+                address = walletAddress,
+                caip2 = caip2For(chainId),
+                limit = requestedHistoryLimit(limit, offset)
+            )
+        }
         val rows = response.transactions.map { tx ->
             rfc3339EpochSeconds(tx.block?.timestamp) to indexedTransaction(
                 chainId = chainId,
@@ -797,15 +821,16 @@ internal class TurnkeyWalletProvider(
         offset: Int?,
         order: RainTransactionOrder?
     ): List<RainTransaction> {
-        val (session, client) = resolveSessionAndClient()
         val requestedLimit = minOf(maxOf(((limit ?: 10) + (offset ?: 0)), 1), 100)
-        val activities = client.getActivities(
-            TGetActivitiesBody(
-                organizationId = session.organizationId,
-                filterByType = listOf(V1ActivityType.ACTIVITY_TYPE_ETH_SEND_TRANSACTION),
-                paginationOptions = V1Pagination(limit = requestedLimit.toString())
+        val activities = sessions.executeRead { session, client ->
+            client.getActivities(
+                TGetActivitiesBody(
+                    organizationId = session.organizationId,
+                    filterByType = listOf(V1ActivityType.ACTIVITY_TYPE_ETH_SEND_TRANSACTION),
+                    paginationOptions = V1Pagination(limit = requestedLimit.toString())
+                )
             )
-        )
+        }
 
         val drafts = activities.activities.mapNotNull { activity ->
             val intent = activity.intent.ethSendTransactionIntent ?: return@mapNotNull null
@@ -837,7 +862,7 @@ internal class TurnkeyWalletProvider(
 
         val transactions = sliced.map { draft ->
             val txHash = runCatching {
-                resolveTransactionHash(client, session.organizationId, draft.sendTransactionStatusId)
+                resolveTransactionHash(draft.sendTransactionStatusId)
             }.getOrNull()
 
             RainTransaction(
@@ -870,16 +895,17 @@ internal class TurnkeyWalletProvider(
         offset: Int?,
         order: RainTransactionOrder?
     ): List<RainTransaction> {
-        val (session, client) = resolveSessionAndClient()
         val caip2 = SolanaChains.caip2(chainId)
         val requestedLimit = minOf(maxOf(((limit ?: 10) + (offset ?: 0)), 1), 100)
-        val activities = client.getActivities(
-            TGetActivitiesBody(
-                organizationId = session.organizationId,
-                filterByType = listOf(V1ActivityType.ACTIVITY_TYPE_SOL_SEND_TRANSACTION),
-                paginationOptions = V1Pagination(limit = requestedLimit.toString())
+        val activities = sessions.executeRead { session, client ->
+            client.getActivities(
+                TGetActivitiesBody(
+                    organizationId = session.organizationId,
+                    filterByType = listOf(V1ActivityType.ACTIVITY_TYPE_SOL_SEND_TRANSACTION),
+                    paginationOptions = V1Pagination(limit = requestedLimit.toString())
+                )
             )
-        )
+        }
 
         val drafts = activities.activities.mapNotNull { activity ->
             val intent = activity.intent.solSendTransactionIntent ?: return@mapNotNull null
@@ -1016,23 +1042,16 @@ internal class TurnkeyWalletProvider(
 
     // ---------- helpers ----------
 
-    private fun resolveSessionAndClient(): Pair<com.turnkey.core.models.Session, TurnkeyClientProtocol> {
-        val session = turnkey.session
-            ?: throw RainError.TokenExpired()
-        val client = turnkey.turnkeyClient
-            ?: throw RainError.TokenExpired()
-        return session to client
-    }
-
     private suspend fun fetchBalances(chainId: Int, walletAddress: String): List<V1AssetBalance> {
-        val (session, client) = resolveSessionAndClient()
-        val response = client.getWalletAddressBalances(
-            TGetWalletAddressBalancesBody(
-                organizationId = session.organizationId,
-                address = walletAddress,
-                caip2 = caip2For(chainId)
+        val response = sessions.executeRead { session, client ->
+            client.getWalletAddressBalances(
+                TGetWalletAddressBalancesBody(
+                    organizationId = session.organizationId,
+                    address = walletAddress,
+                    caip2 = caip2For(chainId)
+                )
             )
-        )
+        }
         return response.balances.orEmpty()
     }
 
@@ -1084,33 +1103,37 @@ internal class TurnkeyWalletProvider(
         )
     }
 
-    private suspend fun resolveTransactionHash(
-        client: TurnkeyClientProtocol,
-        organizationId: String,
-        sendTransactionStatusId: String?
-    ): String? {
+    private suspend fun resolveTransactionHash(sendTransactionStatusId: String?): String? {
         val statusId = sendTransactionStatusId ?: return null
-        val status = client.getSendTransactionStatus(
-            TGetSendTransactionStatusBody(
-                organizationId = organizationId,
-                sendTransactionStatusId = statusId
+        val status = sessions.executeRead { session, client ->
+            client.getSendTransactionStatus(
+                TGetSendTransactionStatusBody(
+                    organizationId = session.organizationId,
+                    sendTransactionStatusId = statusId
+                )
             )
-        )
+        }
         return status.eth?.txHash
     }
 
-    private suspend fun pollForTransactionHash(
-        client: TurnkeyClientProtocol,
-        organizationId: String,
-        sendTransactionStatusId: String
-    ): String {
+    private suspend fun pollForTransactionHash(sendTransactionStatusId: String): String {
         for (attempt in 0 until DEFAULT_POLLING_ATTEMPTS) {
-            val status = client.getSendTransactionStatus(
-                TGetSendTransactionStatusBody(
-                    organizationId = organizationId,
-                    sendTransactionStatusId = sendTransactionStatusId
-                )
-            )
+            // Session-guarded per poll: a session expiring mid-poll refreshes instead of
+            // aborting a transaction that was already submitted. If the session dies for good,
+            // the status id must survive — losing it here would invite a duplicate send after
+            // re-auth. The expiry hook has already fired by then.
+            val status = try {
+                sessions.executeRead { session, client ->
+                    client.getSendTransactionStatus(
+                        TGetSendTransactionStatusBody(
+                            organizationId = session.organizationId,
+                            sendTransactionStatusId = sendTransactionStatusId
+                        )
+                    )
+                }
+            } catch (e: RainError.TokenExpired) {
+                throw RainError.TransactionPending(sendTransactionStatusId)
+            }
 
             val txHash = status.eth?.txHash
             if (!txHash.isNullOrEmpty()) return txHash
@@ -1188,23 +1211,23 @@ internal class TurnkeyWalletProvider(
     ): String {
         val rpcUrl = rpcEndpoints[chainId]
             ?: throw RainError.InvalidConfig("No RPC endpoint configured for chainId=$chainId")
-        val (session, client) = resolveSessionAndClient()
 
         // Baseline for the signature recovery below: the wallet's newest signature before this send.
         val priorSignature = runCatching { solanaRpcClient.getLatestSignature(rpcUrl, from) }.getOrNull()
 
-        val response = client.solSendTransaction(
-            TSolSendTransactionBody(
-                organizationId = session.organizationId,
-                unsignedTransaction = unsigned.transactionHex,
-                signWith = from,
-                sponsor = false,
-                caip2 = SolanaChains.caip2(chainId),
-                recentBlockhash = unsigned.recentBlockhash
-            )
-        )
-        val statusId = response.result.sendTransactionStatusId
-        pollForSolanaCompletion(client, session.organizationId, statusId)?.let { return it }
+        val statusId = sessions.executeWrite { session, client ->
+            client.solSendTransaction(
+                TSolSendTransactionBody(
+                    organizationId = session.organizationId,
+                    unsignedTransaction = unsigned.transactionHex,
+                    signWith = from,
+                    sponsor = false,
+                    caip2 = SolanaChains.caip2(chainId),
+                    recentBlockhash = unsigned.recentBlockhash
+                )
+            ).result.sendTransactionStatusId
+        }
+        pollForSolanaCompletion(statusId)?.let { return it }
 
         // getSignaturesForAddress lags broadcast slightly, so retry briefly before falling back
         // to the status id. Only a signature that differs from the pre-send baseline can belong
@@ -1233,18 +1256,22 @@ internal class TurnkeyWalletProvider(
      * Turnkey SDK 2.0), null at a terminal status without it or on timeout (caller then recovers
      * the signature from chain), and throws on explicit failure.
      */
-    private suspend fun pollForSolanaCompletion(
-        client: TurnkeyClientProtocol,
-        organizationId: String,
-        sendTransactionStatusId: String
-    ): String? {
+    private suspend fun pollForSolanaCompletion(sendTransactionStatusId: String): String? {
         for (attempt in 0 until DEFAULT_POLLING_ATTEMPTS) {
-            val status = client.getSendTransactionStatus(
-                TGetSendTransactionStatusBody(
-                    organizationId = organizationId,
-                    sendTransactionStatusId = sendTransactionStatusId
-                )
-            )
+            // A session dying mid-poll stops the status reads, not the submitted transaction:
+            // returning null lets the caller recover the signature from chain.
+            val status = try {
+                sessions.executeRead { session, client ->
+                    client.getSendTransactionStatus(
+                        TGetSendTransactionStatusBody(
+                            organizationId = session.organizationId,
+                            sendTransactionStatusId = sendTransactionStatusId
+                        )
+                    )
+                }
+            } catch (e: RainError.TokenExpired) {
+                return null
+            }
 
             val normalized = status.txStatus.uppercase()
             val failed = status.txError != null ||

@@ -26,6 +26,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.supervisorScope
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -60,6 +61,7 @@ internal class PrivyWalletProvider(
     private val walletAddressOverride: String? = null,
     private val rpcClient: PrivyRpcClient = PrivyRpcClient(),
     private val solanaSupport: SolanaSupport = SolanaSupport(rpcEndpoints),
+    sessionCoordinator: PrivySessionCoordinator? = null,
 ) : WalletProvider {
 
     override val id: ProviderId get() = ProviderId.PRIVY
@@ -74,6 +76,20 @@ internal class PrivyWalletProvider(
     private var cachedSolanaAddress: String? = null
     private val cachedAddressLock = Mutex()
 
+    // Bumped on every eviction so a resolution that was already in flight when the session
+    // died cannot write the dead session's address back into the cache.
+    private val evictionEpoch = AtomicInteger(0)
+
+    init {
+        // Cached accounts must not survive the session that resolved them: a later login as a
+        // different user would otherwise keep signing with the previous user's addresses.
+        sessionCoordinator?.onSessionDeath {
+            evictionEpoch.incrementAndGet()
+            cachedAddress = null
+            cachedSolanaAddress = null
+        }
+    }
+
     // ---------- address ----------
 
     override suspend fun getWalletAddress(): String {
@@ -83,7 +99,12 @@ internal class PrivyWalletProvider(
         // rather than each firing a redundant Privy lookup.
         return cachedAddressLock.withLock {
             cachedAddress?.let { return@withLock it }
-            manager.getAddress(walletAddressOverride).also { cachedAddress = it }
+            val epoch = evictionEpoch.get()
+            manager.getAddress(walletAddressOverride).also {
+                // Cache only while no eviction happened mid-flight — this result may belong
+                // to a session that just died.
+                if (evictionEpoch.get() == epoch) cachedAddress = it
+            }
         }
     }
 
@@ -92,7 +113,10 @@ internal class PrivyWalletProvider(
         cachedSolanaAddress?.let { return it }
         return cachedAddressLock.withLock {
             cachedSolanaAddress?.let { return@withLock it }
-            manager.getSolanaAddress().also { cachedSolanaAddress = it }
+            val epoch = evictionEpoch.get()
+            manager.getSolanaAddress().also {
+                if (evictionEpoch.get() == epoch) cachedSolanaAddress = it
+            }
         }
     }
 

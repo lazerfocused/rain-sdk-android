@@ -2,6 +2,7 @@ package com.rain.sdk.sample
 
 import com.rain.sdk.RainSdk
 import com.rain.sdk.interfaces.RainClient
+import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.portal.PortalConfig
 import com.rain.sdk.portal.PortalProvider
 import com.rain.sdk.privy.PrivyConfig
@@ -13,6 +14,12 @@ import com.turnkey.core.TurnkeyContext
 import io.portalhq.android.Portal
 import io.portalhq.android.storage.mobile.PortalNamespace
 import io.privy.sdk.Privy
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 
 /**
  * App-side holder around the modular [RainSdk].
@@ -32,6 +39,55 @@ class RainSession {
         private set
 
     val isInitialized: Boolean get() = client?.isInitialized == true
+
+    /** Typed because the session surface lives on the provider, not on [RainClient]. */
+    private sealed interface ActiveProvider {
+        data class Portal(val provider: PortalProvider) : ActiveProvider
+        data class Turnkey(val provider: TurnkeyProvider) : ActiveProvider
+        data class Privy(val provider: PrivyProvider) : ActiveProvider
+
+        fun close() = when (this) {
+            is Portal -> provider.close()
+            is Turnkey -> provider.close()
+            is Privy -> provider.close()
+        }
+    }
+
+    private val activeProvider = MutableStateFlow<ActiveProvider?>(null)
+
+    /** The active provider's `sessionState` as a display model; `null` before resolution. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val sessionStatus: Flow<WalletSessionStatus?> = activeProvider.flatMapLatest { active ->
+        when (active) {
+            null -> flowOf(null)
+            is ActiveProvider.Portal -> active.provider.sessionState.map { it.toStatus() }
+            is ActiveProvider.Turnkey -> active.provider.sessionState.map { it.toStatus() }
+            is ActiveProvider.Privy -> active.provider.sessionState.map { it.toStatus() }
+        }
+    }
+
+    /** Forces a refresh on the active provider; `RainError.TokenExpired` means re-auth. */
+    suspend fun refreshSession() {
+        when (val active = activeProvider.value) {
+            null -> throw RainError.SdkNotInitialized()
+            is ActiveProvider.Turnkey -> active.provider.refreshSession()
+            is ActiveProvider.Privy -> active.provider.refreshSession()
+            is ActiveProvider.Portal -> active.provider.refreshSession()
+        }
+    }
+
+    /** Portal only: installs a host-minted token for the same Portal client. */
+    suspend fun updatePortalSessionToken(sessionToken: String) {
+        val active = activeProvider.value as? ActiveProvider.Portal
+            ?: throw RainError.SdkNotInitialized()
+        active.provider.updateSessionToken(sessionToken)
+    }
+
+    /** A discarded provider must never fire its hooks. */
+    private fun closeActiveProvider() {
+        activeProvider.value?.close()
+        activeProvider.value = null
+    }
 
     // Rain API credentials entered in the Home screen. Stashed here because the SDK is built
     // lazily — applied via the builder at build time and pushed through configureRainApi when
@@ -68,19 +124,28 @@ class RainSession {
         sessionToken: String,
         rpcEndpoints: Map<Int, String>,
         chainId: Int? = null,
+        onSessionTokenNeeded: (suspend () -> String?)? = null,
+        onSessionExpired: (() -> Unit)? = null,
     ) {
+        closeActiveProvider()
+        val provider = PortalProvider(
+            config = PortalConfig(
+                sessionToken = sessionToken,
+                chainId = chainId,
+                onSessionTokenNeeded = onSessionTokenNeeded,
+                onSessionExpired = onSessionExpired,
+            ),
+            // Re-fired after every token refresh.
+            onPortalCreated = { portal = it },
+        )
         val sdk = RainSdk.builder()
             .rpcEndpoints(rpcEndpoints)
-            .register(
-                PortalProvider(
-                    config = PortalConfig(sessionToken = sessionToken, chainId = chainId),
-                    onPortalCreated = { portal = it },
-                )
-            )
+            .register(provider)
             .withSharedConfig()
             .build()
         rain = sdk
         client = sdk.provider(ProviderId.PORTAL)
+        activeProvider.value = ActiveProvider.Portal(provider)
     }
 
     /**
@@ -120,14 +185,24 @@ class RainSession {
         rpcEndpoints: Map<Int, String>,
         chainId: Int? = null,
         walletAddress: String? = null,
+        onSessionExpired: (() -> Unit)? = null,
     ) {
+        closeActiveProvider()
+        val provider = TurnkeyProvider(
+            TurnkeyConfig(
+                turnkey = turnkey,
+                walletAddress = walletAddress,
+                onSessionExpired = onSessionExpired,
+            )
+        )
         val sdk = RainSdk.builder()
             .rpcEndpoints(rpcEndpoints)
-            .register(TurnkeyProvider(TurnkeyConfig(turnkey = turnkey, walletAddress = walletAddress)))
+            .register(provider)
             .withSharedConfig()
             .build()
         rain = sdk
         client = sdk.provider(ProviderId.TURNKEY)
+        activeProvider.value = ActiveProvider.Turnkey(provider)
     }
 
     /** Builds the SDK with the Privy provider and resolves the Privy-backed client. */
@@ -135,17 +210,28 @@ class RainSession {
         privy: Privy,
         rpcEndpoints: Map<Int, String>,
         walletAddress: String? = null,
+        onSessionExpired: (() -> Unit)? = null,
     ) {
+        closeActiveProvider()
+        val provider = PrivyProvider(
+            PrivyConfig(
+                privy = privy,
+                walletAddress = walletAddress,
+                onSessionExpired = onSessionExpired,
+            )
+        )
         val sdk = RainSdk.builder()
             .rpcEndpoints(rpcEndpoints)
-            .register(PrivyProvider(PrivyConfig(privy = privy, walletAddress = walletAddress)))
+            .register(provider)
             .withSharedConfig()
             .build()
         rain = sdk
         client = sdk.provider(ProviderId.PRIVY)
+        activeProvider.value = ActiveProvider.Privy(provider)
     }
 
     fun reset() {
+        closeActiveProvider()
         runCatching { client?.reset() }
         runCatching { rain?.reset() }
         client = null

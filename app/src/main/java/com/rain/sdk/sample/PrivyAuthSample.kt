@@ -25,12 +25,23 @@ object PrivyAuthSample {
     val privy: Privy
         get() = instance ?: error("PrivyAuthSample.init(...) not called yet")
 
+    /** Snapshot of the ids Privy was initialized with, to detect edits made afterwards. */
+    private var configuredWith: Pair<String, String>? = null
+
     /**
-     * Initializes the Privy singleton (idempotent — reuses the existing instance). Must run on the
-     * main thread with the Application context.
+     * Initializes the Privy singleton. Idempotent; editing the ids afterwards throws, because
+     * Privy cannot be reconfigured without relaunching the app. Main thread, Application context.
      */
     fun init(app: Application, appId: String, appClientId: String) {
-        if (instance != null) return
+        val snapshot = appId to appClientId
+        configuredWith?.let { existing ->
+            check(existing == snapshot) {
+                "Privy is already configured with different values this session. Fully kill the " +
+                    "app and relaunch to change the App ID or App Client ID."
+            }
+            return
+        }
+        configuredWith = snapshot
         SampleLog.d(
             "PrivyAuth",
             "init appId=${SampleLog.maskToken(appId)} clientId=${SampleLog.maskToken(appClientId)}"

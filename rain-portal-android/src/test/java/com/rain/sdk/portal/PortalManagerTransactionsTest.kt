@@ -1,6 +1,7 @@
 package com.rain.sdk.portal
 
 import com.google.common.truth.Truth.assertThat
+import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.internal.tokenstore.TokenMetadataStore
 import com.rain.sdk.models.NativeCurrency
 import io.mockk.coEvery
@@ -10,11 +11,13 @@ import io.mockk.mockk
 import io.mockk.spyk
 import io.mockk.unmockkAll
 import io.portalhq.android.Portal
+import io.portalhq.android.exceptions.PortalException
 import io.portalhq.android.api.data.Transaction
 import io.portalhq.android.mpc.data.FeatureFlags
 import io.portalhq.android.provider.data.RequestOptions
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /**
@@ -92,6 +95,25 @@ class PortalManagerTransactionsTest {
 
         assertThat(result).hasSize(1)
         assertThat(result.single().asset).isEqualTo("AVAX")
+    }
+
+    @Test
+    fun `an expired token on the ERC-20 symbol eth_call surfaces as TokenExpired, not null metadata`() {
+        val contractAddress = "0x9876543210987654321098765432109876543210"
+        val portal = mockk<Portal>(relaxed = true)
+        coEvery {
+            portal.api.getTransactions(any(), any(), any(), any())
+        } returns Result.success(listOf(contractTransfer(43114, contractAddress)))
+        coEvery {
+            portal.request(any(), any(), any(), null as RequestOptions?)
+        } throws PortalException.Api.HttpUnauthorized("401 - Unauthorized")
+        val tokenStore = mockk<TokenMetadataStore>()
+        every { tokenStore.nativeCurrencyOrNull(43114) } returns
+            NativeCurrency(symbol = "AVAX", name = "Avalanche")
+
+        assertThrows(RainError.TokenExpired::class.java) {
+            runBlocking { managerWith(portal).getTransactions(chainId = 43114, tokenStore = tokenStore) }
+        }
     }
 
     @Test

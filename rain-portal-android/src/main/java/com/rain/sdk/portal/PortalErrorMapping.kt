@@ -3,6 +3,7 @@ package com.rain.sdk.portal
 import com.rain.sdk.internal.error.RainError
 import io.portalhq.android.exceptions.PortalException
 import io.portalhq.android.utils.errors.PortalErrorCodes
+import java.io.IOException
 
 /**
  * Maps Portal vendor errors to specific [RainError] cases before generic wrapping. Mapping is
@@ -61,4 +62,21 @@ internal object PortalErrorMapping {
     } else {
       null
     }
+
+  /** Network I/O or HTTP 408/429/5xx; Portal only carries the status as a `"<status> - …"` prefix. */
+  fun isTransient(e: Throwable): Boolean = when (e) {
+    is IOException, is RainError.NetworkError -> true
+    is PortalException.Api.HttpRequestFailed ->
+      httpStatusOrNull(e)?.let(::isTransientStatus) == true ||
+        e.message.orEmpty().contains(NO_HTTP_RESPONSE_MARKER)
+    else -> false
+  }
+
+  fun httpStatusOrNull(e: PortalException.Api.HttpRequestFailed): Int? =
+    e.message?.substringBefore(" - ", missingDelimiterValue = "")?.trim()?.toIntOrNull()
+
+  private fun isTransientStatus(status: Int): Boolean =
+    status == 408 || status == 429 || status in 500..599
+
+  private const val NO_HTTP_RESPONSE_MARKER = "unable to receive a valid HTTP response"
 }

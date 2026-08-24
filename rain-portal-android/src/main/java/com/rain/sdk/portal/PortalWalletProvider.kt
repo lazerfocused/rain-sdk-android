@@ -18,11 +18,12 @@ import java.math.BigDecimal
  * WalletProvider implementation using Portal SDK.
  *
  * Balance reads build rich [Balance] values via [PortalManager], resolving token metadata
- * (decimals / symbol / name) through the shared [tokenStore].
+ * (decimals / symbol / name) through the shared [tokenStore]. Every call runs through [sessions].
  */
 internal class PortalWalletProvider(
   private val portalManager: PortalManager,
-  private val tokenStore: TokenMetadataStore
+  private val tokenStore: TokenMetadataStore,
+  private val sessions: PortalSessionCoordinator = PortalSessionCoordinator(),
 ) : WalletProvider {
 
   override val id: ProviderId get() = ProviderId.PORTAL
@@ -39,8 +40,8 @@ internal class PortalWalletProvider(
     }
   }
 
-  override suspend fun getWalletAddress(): String {
-    return portalManager.getAddress()
+  override suspend fun getWalletAddress(): String = sessions.executeRead {
+    portalManager.getAddress()
   }
 
   override suspend fun sendNativeToken(
@@ -53,13 +54,15 @@ internal class PortalWalletProvider(
     val valueWeiHex = EthereumConverter.convertEthToWeiHex(amountInEth)
 
     // For native transfers, data is "0x"
-    return portalManager.sendTransaction(
-      chainId = chainId,
-      from = fromAddress,
-      to = toAddress,
-      data = "0x",
-      value = valueWeiHex
-    )
+    return sessions.executeWrite {
+      portalManager.sendTransaction(
+        chainId = chainId,
+        from = fromAddress,
+        to = toAddress,
+        data = "0x",
+        value = valueWeiHex
+      )
+    }
   }
 
   override suspend fun sendToken(
@@ -74,21 +77,23 @@ internal class PortalWalletProvider(
     val data = Erc20Abi.encodeTransfer(toAddress, amount, decimals)
 
     // For ERC-20 transfers, the "to" is the contract address and value is 0x0
-    return portalManager.sendTransaction(
-      chainId = chainId,
-      from = fromAddress,
-      to = contractAddress,
-      data = data,
-      value = "0x0"
-    )
+    return sessions.executeWrite {
+      portalManager.sendTransaction(
+        chainId = chainId,
+        from = fromAddress,
+        to = contractAddress,
+        data = data,
+        value = "0x0"
+      )
+    }
   }
 
-  override suspend fun getBalance(chainId: Int, token: Token): Balance {
-    return portalManager.getBalance(chainId, token, tokenStore)
+  override suspend fun getBalance(chainId: Int, token: Token): Balance = sessions.executeRead {
+    portalManager.getBalance(chainId, token, tokenStore)
   }
 
-  override suspend fun getBalances(chainId: Int): List<Balance> {
-    return portalManager.getBalances(chainId, tokenStore)
+  override suspend fun getBalances(chainId: Int): List<Balance> = sessions.executeRead {
+    portalManager.getBalances(chainId, tokenStore)
   }
 
   override suspend fun getTransactions(
@@ -96,8 +101,8 @@ internal class PortalWalletProvider(
     limit: Int?,
     offset: Int?,
     order: RainTransactionOrder?
-  ): List<RainTransaction> {
-    return portalManager.getTransactions(chainId, tokenStore, limit, offset, order)
+  ): List<RainTransaction> = sessions.executeRead {
+    portalManager.getTransactions(chainId, tokenStore, limit, offset, order)
   }
 
   override suspend fun signTypedData(
@@ -106,7 +111,9 @@ internal class PortalWalletProvider(
     typedDataJson: String
   ): String {
     requireEvmChain(chainId)
-    return portalManager.signTypedData(chainId, walletAddress, typedDataJson)
+    return sessions.executeWrite {
+      portalManager.signTypedData(chainId, walletAddress, typedDataJson)
+    }
   }
 
   override suspend fun sendTransaction(
@@ -117,7 +124,9 @@ internal class PortalWalletProvider(
     value: String
   ): String {
     requireEvmChain(chainId)
-    return portalManager.sendTransaction(chainId, from, to, data, value)
+    return sessions.executeWrite {
+      portalManager.sendTransaction(chainId, from, to, data, value)
+    }
   }
 
   override suspend fun estimateTransactionFee(
@@ -128,6 +137,8 @@ internal class PortalWalletProvider(
     value: String
   ): BigDecimal {
     requireEvmChain(chainId)
-    return portalManager.estimateTransactionFee(chainId, from, to, data, value)
+    return sessions.executeRead {
+      portalManager.estimateTransactionFee(chainId, from, to, data, value)
+    }
   }
 }

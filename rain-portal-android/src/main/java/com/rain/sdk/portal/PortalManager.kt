@@ -47,6 +47,12 @@ internal class PortalManager {
   @Volatile
   private var _portal: Portal? = null
 
+  // Retained so a token refresh can rebuild an identical client.
+  private var legacyEthChainId: Int = 1
+  private var rpcConfig: Map<String, String> = emptyMap()
+  private var featureFlags: FeatureFlags? = null
+  private var autoApprove: Boolean = true
+
   /**
    * Checks if Portal has been initialized.
    */
@@ -72,29 +78,45 @@ internal class PortalManager {
     featureFlags: FeatureFlags,
     autoApprove: Boolean
   ) {
-    destroy()
+    this.legacyEthChainId = legacyEthChainId
+    this.rpcConfig = rpcConfig
+    this.featureFlags = featureFlags
+    this.autoApprove = autoApprove
+    swapPortal(apiKey)
+  }
 
-    scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+  /** Rebuilds the client around a new token with the config from [initialize]; MPC shares survive. */
+  fun reinitialize(apiKey: String) {
+    if (_portal == null) throw RainError.SdkNotInitialized()
+    swapPortal(apiKey)
+  }
+
+  private fun swapPortal(apiKey: String) {
+    val previousScope = scope
+    val nextScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     val portal = createPortal(
       apiKey = apiKey,
       legacyEthChainId = legacyEthChainId,
       rpcConfig = rpcConfig,
-      featureFlags = featureFlags,
+      featureFlags = featureFlags ?: FeatureFlags(),
       autoApprove = autoApprove
     )
 
     // Setup auto-signing handler matching InitPortalUseCase logic
     portal.on(PortalEvents.PortalSigningRequested) { data ->
       Timber.d("Rain SDK: Auto-approving signing request")
-      if (scope.isActive) {
-        scope.launch {
+      if (nextScope.isActive) {
+        nextScope.launch {
           portal.emit(PortalEvents.PortalSigningApproved, data)
         }
       }
     }
 
+    // Publish before retiring the old one so concurrent callers never see a gap.
+    scope = nextScope
     _portal = portal
+    previousScope.cancel()
     Timber.d("Rain SDK: Portal initialized successfully with event handlers")
   }
 
@@ -150,6 +172,7 @@ internal class PortalManager {
       portal.api.getAssets(eip155ChainId).getOrThrow().tokenBalances
     } catch (e: Exception) {
       if (e is CancellationException) throw e
+      if (e is RainError) throw e
       Timber.e(e, "Rain SDK: Failed to get balances for chainId=$chainId")
       throw PortalErrorMapping.mapAuthOrNull(e) ?: RainError.ProviderError(e)
     }
@@ -319,6 +342,7 @@ internal class PortalManager {
       }
     } catch (e: Exception) {
       if (e is CancellationException) throw e
+      if (e is RainError) throw e
       Timber.e(e, "Rain SDK: Failed to get transactions for chainId=$chainId")
       throw PortalErrorMapping.mapAuthOrNull(e) ?: RainError.ProviderError(e)
     }
@@ -590,6 +614,8 @@ internal class PortalManager {
       val hex = result.toHexString()
       hex.removePrefix("0x").toBigInteger(16).toInt()
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
+      PortalErrorMapping.mapAuthOrNull(e)?.let { throw it }
       Timber.w(e, "Rain SDK: Failed to fetch decimals for contract=$contractAddress")
       null
     }
@@ -622,6 +648,8 @@ internal class PortalManager {
         null
       }
     } catch (e: Exception) {
+      if (e is CancellationException) throw e
+      PortalErrorMapping.mapAuthOrNull(e)?.let { throw it }
       Timber.w(e, "Rain SDK: Failed to fetch symbol for contract=$contractAddress")
       null
     }

@@ -347,12 +347,15 @@ internal class RainSdkManager(
 
     // Fan out across every configured chain in parallel, flattened into one list. Each
     // Balance carries its own chainId. A chain that fails contributes no entries rather
-    // than failing the whole call, so one bad RPC endpoint doesn't hide the others.
+    // than failing the whole call, so one bad RPC endpoint doesn't hide the others. A dead
+    // wallet session is the exception: it affects every chain identically, and swallowing it
+    // would return an empty list a host could mistake for zero balances.
     return coroutineScope {
       chainIds.map { chainId ->
         async {
           runCatching { walletProvider.getBalances(chainId) }.getOrElse { e ->
             if (e is CancellationException) throw e
+            if (e is RainError.TokenExpired) throw e
             Timber.w(e, "Rain SDK: getAllBalances failed for chainId=$chainId")
             emptyList()
           }

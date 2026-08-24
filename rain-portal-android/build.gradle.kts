@@ -70,6 +70,7 @@ dependencies {
     testImplementation(libs.truth)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.json)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 mavenPublishing {

@@ -81,6 +81,25 @@ class RainSdkManagerGetAllBalancesTest {
     }
 
     @Test
+    fun `getAllBalances surfaces a dead session instead of returning an empty list`(): Unit =
+        runBlocking {
+            val stub = object : StubWalletProvider() {
+                override suspend fun getBalances(chainId: Int): List<Balance> =
+                    throw RainError.TokenExpired()
+            }
+            val (manager, _) = TestManagers.stubProviderManager(
+                stub,
+                rpcEndpoints = mapOf(1 to "https://rpc.test", 137 to "https://rpc.test")
+            )
+
+            // A dead wallet session affects every chain identically; an empty list here would
+            // read as zero balances rather than as "re-authenticate".
+            assertThrows(RainError.TokenExpired::class.java) {
+                runBlocking { manager.getAllBalances() }
+            }
+        }
+
+    @Test
     fun `reset leaves the client usable and the chain configuration intact`(): Unit = runBlocking {
         val stub = object : StubWalletProvider() {
             override suspend fun getBalances(chainId: Int): List<Balance> =

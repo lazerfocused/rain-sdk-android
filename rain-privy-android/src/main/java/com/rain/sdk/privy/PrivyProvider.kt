@@ -6,7 +6,11 @@ import com.rain.sdk.provider.ProviderContext
 import com.rain.sdk.provider.ProviderId
 import com.rain.sdk.provider.RainProvider
 import io.privy.sdk.Privy
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 
 /**
@@ -25,10 +29,19 @@ import kotlinx.coroutines.withContext
  * @param walletAddress Optional explicit embedded-wallet address; when null Rain uses the user's
  *                      first embedded Ethereum wallet. Ethereum only — Solana always uses the
  *                      user's first embedded Solana wallet.
+ * @param sessionPolicy Auth-guard and transient-retry behavior for every wallet call.
+ * @param onSessionExpired Re-auth hook: invoked once per session death when the Privy session
+ *                         dies — whether that is discovered during a wallet call or by the
+ *                         passive session watcher. May run on the calling coroutine's thread or
+ *                         a watcher thread; hop to the main thread before touching UI, and never
+ *                         call back into the SDK synchronously from it. Restart authentication
+ *                         from here.
  */
 class PrivyConfig(
     val privy: Privy,
     val walletAddress: String? = null,
+    val sessionPolicy: PrivySessionPolicy = PrivySessionPolicy(),
+    val onSessionExpired: (() -> Unit)? = null,
 )
 
 /**
@@ -47,13 +60,58 @@ class PrivyProvider(
 
     override val capabilities: Set<Capability> = CAPABILITIES
 
+    private val coordinator: PrivySessionCoordinator by lazy {
+        PrivySessionCoordinator(
+            privy = config.privy,
+            policy = config.sessionPolicy,
+            onSessionExpired = config.onSessionExpired,
+        )
+    }
+
+    // Lives for the provider's lifetime; the Privy singleton it watches is process-wide anyway.
+    private val monitorScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * The Privy session as seen at the Rain boundary, over time. Emits on every Privy
+     * auth-state change, so a host can react to a session dying silently without waiting for a
+     * wallet call to fail.
+     */
+    val sessionState: Flow<PrivySessionState> get() = coordinator.sessionStates
+
+    /** Snapshot of [sessionState] right now. */
+    fun currentSessionState(): PrivySessionState = coordinator.currentState()
+
+    /**
+     * Forces a Privy session refresh (`PrivyUser.refresh`). Rarely needed — Privy refreshes its
+     * own session before every call — but available for hosts that want an explicit health
+     * check. Throws `RainError.TokenExpired` when the session cannot be refreshed — the host
+     * must re-authenticate.
+     */
+    suspend fun refreshSession() = coordinator.refreshNow()
+
+    /**
+     * Stops the passive session watcher. Call when discarding this provider (e.g. rebuilding
+     * the SDK for a new login) so a stale provider stops observing the process-wide Privy
+     * singleton and can never fire its expiry hook again.
+     */
+    fun close() {
+        coordinator.stop()
+        monitorScope.cancel()
+    }
+
     override suspend fun create(context: ProviderContext): WalletProvider {
+        // Always watch: beyond the optional host hook, the watcher drives cached-account
+        // eviction on session death so a re-login can never sign with the previous user's
+        // cached address.
+        coordinator.startMonitoring(monitorScope)
+
         val provider = PrivyWalletProvider(
-            manager = PrivyManager(config.privy),
+            manager = PrivyManager(config.privy, coordinator),
             rpcEndpoints = context.rpcEndpoints,
             tokenStore = context.tokenStore,
             walletAddressOverride = config.walletAddress,
             solanaSupport = context.solanaSupport,
+            sessionCoordinator = coordinator,
         )
 
         // Probe — ensures Privy has an embedded Ethereum wallet available before handing it out.
