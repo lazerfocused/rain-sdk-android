@@ -96,17 +96,16 @@ class TurnkeyProvider internal constructor(
      * the SDK for a new login) so a stale provider stops observing the process-wide Turnkey
      * singleton and can never fire its expiry hook again.
      */
-    fun close() {
+    override fun close() {
         coordinator.stop()
         monitorScope.cancel()
     }
 
     override suspend fun create(context: ProviderContext): WalletProvider {
-        // The watcher only exists to drive the host's re-auth hook; without one there is
-        // nothing to notify and no reason to hold a collector on the Turnkey singleton.
-        if (config.onSessionExpired != null) {
-            coordinator.startMonitoring(monitorScope)
-        }
+        // Always watch: beyond the optional host hook, the watcher drives cached-account
+        // eviction on session death so a re-login can never sign with the previous user's
+        // cached address.
+        coordinator.startMonitoring(monitorScope)
 
         val provider = TurnkeyWalletProvider(
             turnkey = turnkeyContext,

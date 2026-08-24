@@ -45,12 +45,6 @@ class RainSession {
         data class Portal(val provider: PortalProvider) : ActiveProvider
         data class Turnkey(val provider: TurnkeyProvider) : ActiveProvider
         data class Privy(val provider: PrivyProvider) : ActiveProvider
-
-        fun close() = when (this) {
-            is Portal -> provider.close()
-            is Turnkey -> provider.close()
-            is Privy -> provider.close()
-        }
     }
 
     private val activeProvider = MutableStateFlow<ActiveProvider?>(null)
@@ -83,9 +77,9 @@ class RainSession {
         active.provider.updateSessionToken(sessionToken)
     }
 
-    /** A discarded provider must never fire its hooks. */
+    /** A discarded SDK must never fire its providers' hooks. */
     private fun closeActiveProvider() {
-        activeProvider.value?.close()
+        runCatching { rain?.close() }
         activeProvider.value = null
     }
 
@@ -231,9 +225,10 @@ class RainSession {
     }
 
     fun reset() {
-        closeActiveProvider()
-        runCatching { client?.reset() }
-        runCatching { rain?.reset() }
+        // close() resets and tears the registered providers down, so their session watchers
+        // stop and no stale hook survives into the next login.
+        runCatching { rain?.close() }
+        activeProvider.value = null
         client = null
         rain = null
         portal = null

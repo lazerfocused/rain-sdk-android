@@ -54,6 +54,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Turnkey-based implementation of [WalletProvider]. Used when the SDK is initialized with
@@ -111,6 +112,10 @@ internal class TurnkeyWalletProvider(
     private val sessions: TurnkeySessionCoordinator =
         sessionCoordinator ?: TurnkeySessionCoordinator(turnkey)
 
+    // Bumped on every eviction so a resolution that was already in flight when the session
+    // died cannot write the dead session's address back into the cache.
+    private val evictionEpoch = AtomicInteger(0)
+
     // Once resolved, the wallet address is stable for the provider's lifetime, so cache
     // it. Mutex (rather than synchronized) so the suspend-friendly address() doesn't block
     // a thread while it's waiting on Turnkey's refresh.
@@ -119,6 +124,16 @@ internal class TurnkeyWalletProvider(
     private var cachedAddress: String? = null
     @Volatile
     private var cachedSolanaAddress: String? = null
+
+    init {
+        // Cached accounts must not survive the session that resolved them: a later login as a
+        // different user would otherwise keep signing with the previous user's addresses.
+        sessions.onSessionDeath {
+            evictionEpoch.incrementAndGet()
+            cachedAddress = null
+            cachedSolanaAddress = null
+        }
+    }
 
     private companion object {
         const val DEFAULT_NATIVE_DECIMALS = 18
@@ -169,12 +184,18 @@ internal class TurnkeyWalletProvider(
         return cachedAddressLock.withLock {
             cachedAddress?.let { return@withLock it }
 
-            resolveEthereumWalletAddress(turnkey.wallets)?.also { cachedAddress = it }
+            // Cache only while no eviction happened mid-flight — a result resolved across a
+            // session death may belong to the previous user.
+            val epoch = evictionEpoch.get()
+            fun cache(address: String): String =
+                address.also { if (evictionEpoch.get() == epoch) cachedAddress = it }
+
+            resolveEthereumWalletAddress(turnkey.wallets)?.let(::cache)
                 ?: run {
                     // Session-guarded: an expired session surfaces as TokenExpired here rather
                     // than as the vendor's raw refresh-wallets failure.
                     sessions.executeRead { _, _ -> turnkey.refreshWallets() }
-                    resolveEthereumWalletAddress(turnkey.wallets)?.also { cachedAddress = it }
+                    resolveEthereumWalletAddress(turnkey.wallets)?.let(::cache)
                         ?: throw RainError.WalletUnavailable("No Ethereum wallet available from Turnkey context")
                 }
         }
@@ -194,10 +215,14 @@ internal class TurnkeyWalletProvider(
         return cachedAddressLock.withLock {
             cachedSolanaAddress?.let { return@withLock it }
 
-            resolveSolanaWalletAddress(turnkey.wallets)?.also { cachedSolanaAddress = it }
+            val epoch = evictionEpoch.get()
+            fun cache(address: String): String =
+                address.also { if (evictionEpoch.get() == epoch) cachedSolanaAddress = it }
+
+            resolveSolanaWalletAddress(turnkey.wallets)?.let(::cache)
                 ?: run {
                     sessions.executeRead { _, _ -> turnkey.refreshWallets() }
-                    resolveSolanaWalletAddress(turnkey.wallets)?.also { cachedSolanaAddress = it }
+                    resolveSolanaWalletAddress(turnkey.wallets)?.let(::cache)
                         ?: throw RainError.WalletUnavailable("No Solana wallet available from Turnkey context")
                 }
         }

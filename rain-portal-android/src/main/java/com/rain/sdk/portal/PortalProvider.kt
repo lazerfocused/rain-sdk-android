@@ -94,9 +94,15 @@ class PortalProvider internal constructor(
         coordinator.installNow(sessionToken)
     }
 
-    /** Silences the session hooks; call when discarding this provider. */
-    fun close() {
+    /**
+     * Discards this provider: silences the session hooks and tears the Portal client down
+     * (cancelling its auto-approve signing handler). Idempotent, and terminal — build a new
+     * [PortalProvider] to use Portal again.
+     */
+    override fun close() {
         coordinator.stop()
+        portalManager?.destroy()
+        portalManager = null
     }
 
     override suspend fun create(context: ProviderContext): WalletProvider {
