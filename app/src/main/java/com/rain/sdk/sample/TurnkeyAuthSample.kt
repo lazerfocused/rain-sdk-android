@@ -65,16 +65,28 @@ object TurnkeyAuthSample {
             .onFailure { SampleLog.w("TurnkeyAuth", "logout (clearAllSessions) failed: ${it.message}") }
     }
 
+    /** Snapshot of the ids Turnkey was initialized with, to detect edits made afterwards. */
+    private var configuredWith: Pair<String, String>? = null
+
     /**
-     * Initializes the Turnkey singleton. Idempotent — Turnkey's `initSuspend` no-ops on
-     * subsequent calls within the same process, so changing org/proxy IDs after the first
-     * call requires restarting the app.
+     * Initializes the Turnkey singleton. Idempotent; editing the ids afterwards throws, because
+     * Turnkey's `initSuspend` silently ignores a second config within the same process.
      */
     suspend fun init(
         app: Application,
         organizationId: String,
         authProxyConfigId: String
     ) {
+        val snapshot = organizationId to authProxyConfigId
+        configuredWith?.let { existing ->
+            check(existing == snapshot) {
+                "Turnkey is already configured with different values this session. Fully kill the " +
+                    "app and relaunch to change the Organization ID or Auth Proxy Config ID."
+            }
+            TurnkeyContext.awaitReady()
+            return
+        }
+        configuredWith = snapshot
         SampleLog.d(
             "TurnkeyAuth",
             "init org=${SampleLog.maskToken(organizationId)} proxy=${SampleLog.maskToken(authProxyConfigId)}"

@@ -6,7 +6,11 @@ import com.rain.sdk.provider.ProviderContext
 import com.rain.sdk.provider.ProviderId
 import com.rain.sdk.provider.RainProvider
 import com.turnkey.core.TurnkeyContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 
 /**
@@ -19,10 +23,19 @@ import kotlinx.coroutines.withContext
  * @param turnkey The authenticated `TurnkeyContext` singleton.
  * @param walletAddress Optional explicit EVM address override; when null Rain uses the first
  *                      available Ethereum account from the context.
+ * @param sessionPolicy Expiry/refresh/retry behavior for the session guarding every wallet call.
+ * @param onSessionExpired Re-auth hook: invoked once per session death when the Turnkey session
+ *                         dies and cannot be refreshed — whether that is discovered during a
+ *                         wallet call or by the passive session watcher. May run on the calling
+ *                         coroutine's thread or a watcher thread; hop to the main thread before
+ *                         touching UI, and never call back into the SDK synchronously from it.
+ *                         Restart authentication from here.
  */
 class TurnkeyConfig(
     val turnkey: TurnkeyContext,
     val walletAddress: String? = null,
+    val sessionPolicy: TurnkeySessionPolicy = TurnkeySessionPolicy(),
+    val onSessionExpired: (() -> Unit)? = null,
 )
 
 /**
@@ -46,9 +59,54 @@ class TurnkeyProvider internal constructor(
     override val capabilities: Set<Capability> =
         setOf(Capability.MULTI_CHAIN, Capability.BIOMETRIC_GATE)
 
+    private val turnkeyContext: TurnkeyContextProtocol by lazy {
+        contextOverride ?: TurnkeyContextAdapter(config.turnkey)
+    }
+
+    private val coordinator: TurnkeySessionCoordinator by lazy {
+        TurnkeySessionCoordinator(
+            turnkey = turnkeyContext,
+            policy = config.sessionPolicy,
+            onSessionExpired = config.onSessionExpired,
+        )
+    }
+
+    // Lives for the provider's lifetime; the Turnkey singleton it watches is process-wide anyway.
+    private val monitorScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * The Turnkey session as seen at the Rain boundary, over time. Emits on every Turnkey
+     * auth/session change and when an active session passes its expiry, so a host can react to
+     * a session dying silently without waiting for a wallet call to fail.
+     */
+    val sessionState: Flow<TurnkeySessionState> get() = coordinator.sessionStates
+
+    /** Snapshot of [sessionState] right now. */
+    fun currentSessionState(): TurnkeySessionState = coordinator.currentState()
+
+    /**
+     * Forces a Turnkey session refresh (new JWT, extended expiry) regardless of remaining
+     * lifetime. Throws `RainError.TokenExpired` when the session cannot be refreshed — the
+     * host must re-authenticate.
+     */
+    suspend fun refreshSession() = coordinator.refreshNow()
+
+    /**
+     * Stops the passive session watcher. Call when discarding this provider (e.g. rebuilding
+     * the SDK for a new login) so a stale provider stops observing the process-wide Turnkey
+     * singleton and can never fire its expiry hook again.
+     */
+    fun close() {
+        coordinator.stop()
+        monitorScope.cancel()
+    }
+
     override suspend fun create(context: ProviderContext): WalletProvider {
-        val turnkeyContext: TurnkeyContextProtocol =
-            contextOverride ?: TurnkeyContextAdapter(config.turnkey)
+        // The watcher only exists to drive the host's re-auth hook; without one there is
+        // nothing to notify and no reason to hold a collector on the Turnkey singleton.
+        if (config.onSessionExpired != null) {
+            coordinator.startMonitoring(monitorScope)
+        }
 
         val provider = TurnkeyWalletProvider(
             turnkey = turnkeyContext,
@@ -57,6 +115,7 @@ class TurnkeyProvider internal constructor(
             chainReader = context.evmChainReader,
             solanaSupport = context.solanaSupport,
             tokenStore = context.tokenStore,
+            sessionCoordinator = coordinator,
         )
 
         // Probe — ensures Turnkey has an EVM wallet available before the provider is handed out.

@@ -6,10 +6,14 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.rain.sdk.RainChain
 import com.rain.sdk.sample.PrivyAuthSample
+import com.rain.sdk.sample.RainSampleApp
 import com.rain.sdk.sample.RainSession
 import com.rain.sdk.sample.SampleLog
+import com.rain.sdk.sample.SessionHealth
+import com.rain.sdk.sample.SessionStore
 import com.rain.sdk.sample.TurnkeyAuthSample
 import com.rain.sdk.sample.WalletChain
+import com.rain.sdk.sample.WalletSessionStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,18 +23,154 @@ import kotlinx.coroutines.launch
 enum class WalletMode { Portal, Turnkey, Privy }
 
 class HomeViewModel(
-    private val session: RainSession
+    private val app: RainSampleApp
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(
-        HomeUiState(isInitialized = session.isInitialized)
-    )
+    private val session: RainSession get() = app.session
+    private val store: SessionStore get() = app.store
+
+    // Fields start from the last working values; empty on first run.
+    private val _state = MutableStateFlow(seededState(store.provider?.toMode() ?: WalletMode.Turnkey))
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
 
+    private fun seededState(mode: WalletMode) = HomeUiState(
+        mode = mode,
+        sessionToken = store.portalSessionToken,
+        rainApiKey = store.rainApiKey,
+        userId = store.rainUserId,
+        turnkeyOrgId = store.turnkeyOrgId,
+        turnkeyAuthProxyConfigId = store.turnkeyAuthProxyConfigId,
+        turnkeyEmail = store.turnkeyEmail,
+        privyAppId = store.privyAppId,
+        privyAppClientId = store.privyAppClientId,
+        privyEmail = store.privyEmail,
+    )
+
     init {
-        // Apply the (dev-default) credentials so the SDK is configured even when the user
-        // never edits the fields.
         session.configureRainApi(_state.value.rainApiKey, _state.value.userId)
+
+        viewModelScope.launch {
+            session.sessionStatus.collect { status ->
+                _state.update { current ->
+                    // Portal Refreshing→Active means onSessionTokenNeeded consumed the replacement.
+                    val consumedReplacement =
+                        current.sessionStatus?.health == SessionHealth.Transitional &&
+                            status?.health == SessionHealth.Healthy &&
+                            current.mode == WalletMode.Portal &&
+                            current.replacementPortalToken.isNotBlank()
+                    if (consumedReplacement) store.portalSessionToken = current.replacementPortalToken.trim()
+                    current.copy(
+                        sessionStatus = status,
+                        sessionToken = if (consumedReplacement) current.replacementPortalToken.trim() else current.sessionToken,
+                        replacementPortalToken = if (consumedReplacement) "" else current.replacementPortalToken,
+                    )
+                }
+            }
+        }
+
+        if (session.isInitialized) markResumed() else resumeIfPossible()
+    }
+
+    /** The SDK outlived this ViewModel (Activity recreation): reflect its state without re-initializing. */
+    private fun markResumed() {
+        _state.update {
+            it.copy(
+                isInitialized = true,
+                isRecovered = true,
+                turnkeySessionActive = it.mode == WalletMode.Turnkey,
+                privySessionActive = it.mode == WalletMode.Privy,
+                statusText = "Session resumed"
+            )
+        }
+    }
+
+    /** Replays the saved provider through the same paths the buttons use; falls back to the manual screen. */
+    private fun resumeIfPossible() {
+        val provider = store.provider ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true, statusText = "Resuming ${provider.name} session...") }
+            when (provider) {
+                SessionStore.Provider.Portal ->
+                    if (_state.value.sessionToken.isNotBlank()) initializeSdk() else resumeFallback("Ready")
+                SessionStore.Provider.Turnkey -> {
+                    app.vendorInit?.join()
+                    if (!TurnkeyAuthSample.hasActiveSession()) {
+                        resumeFallback("Saved Turnkey session expired — log in again")
+                    } else if (!TurnkeyAuthSample.activeSessionEmail().matches(_state.value.turnkeyEmail)) {
+                        resumeFallback("Saved Turnkey session belongs to another email — log in again")
+                    } else {
+                        _state.update { it.copy(turnkeySessionActive = true) }
+                        initializeRainWithTurnkey()
+                    }
+                }
+                SessionStore.Provider.Privy -> {
+                    app.vendorInit?.join()
+                    if (!PrivyAuthSample.hasActiveSession()) {
+                        resumeFallback("Saved Privy session expired — log in again")
+                    } else if (!PrivyAuthSample.activeSessionEmail().matches(_state.value.privyEmail)) {
+                        resumeFallback("Saved Privy session belongs to another email — log in again")
+                    } else {
+                        _state.update { it.copy(privySessionActive = true) }
+                        initializeRainWithPrivy()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun resumeFallback(message: String) {
+        SampleLog.i("Resume", message)
+        _state.update { it.copy(isLoading = false, statusText = message) }
+    }
+
+    private fun String?.matches(email: String): Boolean =
+        this != null && trim().equals(email.trim(), ignoreCase = true)
+
+    fun onReplacementPortalTokenChanged(value: String) {
+        _state.update { it.copy(replacementPortalToken = value) }
+    }
+
+    fun refreshSession() {
+        SampleLog.i("Session", "manual refreshSession() on ${_state.value.mode}")
+        _state.update { it.copy(isLoading = true, statusText = "Refreshing session...") }
+        viewModelScope.launch {
+            try {
+                session.refreshSession()
+                _state.update { it.copy(isLoading = false, statusText = "Session refreshed") }
+            } catch (e: Exception) {
+                SampleLog.e("Session", "refresh failed: ${e.message}", e)
+                _state.update {
+                    it.copy(isLoading = false, statusText = "Session refresh failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** Portal only: installs the replacement token in place — no SDK rebuild. */
+    fun updatePortalSessionToken() {
+        val token = _state.value.replacementPortalToken.trim()
+        if (token.isBlank()) return
+        SampleLog.i("Portal.session", "updateSessionToken(${SampleLog.maskToken(token)})")
+        _state.update { it.copy(isLoading = true, statusText = "Installing new Portal session token...") }
+        viewModelScope.launch {
+            try {
+                session.updatePortalSessionToken(token)
+                store.portalSessionToken = token
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        sessionToken = token,
+                        replacementPortalToken = "",
+                        statusText = "Portal session token updated"
+                    )
+                }
+            } catch (e: Exception) {
+                SampleLog.e("Portal.session", "updateSessionToken failed: ${e.message}", e)
+                _state.update {
+                    it.copy(isLoading = false, statusText = "Token update failed: ${e.message}")
+                }
+            }
+        }
     }
 
     fun onModeChanged(mode: WalletMode) {
@@ -89,7 +229,10 @@ class HomeViewModel(
 
         val tokenMask = SampleLog.maskToken(_state.value.sessionToken)
         SampleLog.i("Portal.init", "calling initializePortal sessionToken=$tokenMask chainId=${RainChain.AVALANCHE_TESTNET}")
+        _state.update { it.copy(isLoading = true, statusText = "Initializing Portal...") }
 
+        // Hooks outlive this call: capture the state holder, not the ViewModel.
+        val uiState = _state
         viewModelScope.launch {
             try {
                 // Initialize with every EVM chain's RPC (Fuji + Base Sepolia) so the chain
@@ -102,7 +245,26 @@ class HomeViewModel(
                 session.initializePortal(
                     sessionToken = _state.value.sessionToken,
                     rpcEndpoints = rpcConfig,
-                    chainId = RainChain.AVALANCHE_TESTNET
+                    chainId = RainChain.AVALANCHE_TESTNET,
+                    // A host mints a new token for the SAME Portal client here; this sample has no
+                    // backend, so it returns the typed replacement or null (declines).
+                    onSessionTokenNeeded = {
+                        val replacement = uiState.value.replacementPortalToken.trim()
+                        if (replacement.isBlank()) {
+                            SampleLog.w("Portal.session", "onSessionTokenNeeded: no replacement token, declining")
+                            null
+                        } else {
+                            SampleLog.i("Portal.session", "onSessionTokenNeeded: supplying replacement token")
+                            replacement
+                        }
+                    },
+                    // Recovery is "Update token" or Clear Session; the feature grid hides meanwhile.
+                    onSessionExpired = {
+                        SampleLog.w("Portal.session", "Portal session token rejected, new token required")
+                        uiState.update {
+                            it.copy(statusText = "Portal session expired — enter a replacement token")
+                        }
+                    }
                 )
 
                 // A freshly-created Portal client has no wallet; generate one before any screen
@@ -116,8 +278,11 @@ class HomeViewModel(
                 )
                 // Recovery (Portal backup share) is no longer available via the Rain API, so a
                 // successful init goes straight to the feature grid instead of gating on recovery.
+                persistRainCredentials(SessionStore.Provider.Portal)
+                store.portalSessionToken = _state.value.sessionToken.trim()
                 _state.update {
                     it.copy(
+                        isLoading = false,
                         isInitialized = session.isInitialized,
                         statusText = "SDK Initialized Successfully!",
                         isRecovered = true
@@ -127,6 +292,7 @@ class HomeViewModel(
                 SampleLog.e("Portal.init", "failed: ${e.message}", e)
                 _state.update {
                     it.copy(
+                        isLoading = false,
                         statusText = "Error: ${e.message}",
                         isInitialized = false
                     )
@@ -146,6 +312,11 @@ class HomeViewModel(
             "Turnkey.otpInit",
             "starting email-OTP flow email=${SampleLog.maskEmail(s.turnkeyEmail)}"
         )
+        // Saved before init so a relaunch (the only way to change ids) picks up the new values.
+        store.provider = SessionStore.Provider.Turnkey
+        store.turnkeyOrgId = s.turnkeyOrgId.trim()
+        store.turnkeyAuthProxyConfigId = s.turnkeyAuthProxyConfigId.trim()
+        store.turnkeyEmail = s.turnkeyEmail.trim()
         _state.update { it.copy(isLoading = true, statusText = "Initializing Turnkey...") }
         viewModelScope.launch {
             try {
@@ -248,6 +419,7 @@ class HomeViewModel(
         }
         SampleLog.i("Turnkey.rainInit", "initializing Rain w/ Turnkey (EVM + Solana)")
         _state.update { it.copy(isLoading = true, statusText = "Initializing Rain with Turnkey...") }
+        val uiState = _state
         viewModelScope.launch {
             try {
                 val createdEvm = TurnkeyAuthSample.ensureEthereumWallet()
@@ -262,7 +434,21 @@ class HomeViewModel(
                     turnkey = TurnkeyAuthSample.context,
                     rpcEndpoints = WalletChain.rpcEndpoints,
                     chainId = RainChain.AVALANCHE_TESTNET,
-                    walletAddress = null
+                    walletAddress = null,
+                    // Restart the OTP flow; a fresh login revives the provider (it watches the
+                    // process-wide Turnkey singleton), so Rain is not re-initialized.
+                    onSessionExpired = {
+                        SampleLog.w("Turnkey.session", "Turnkey session expired, re-auth required")
+                        uiState.update {
+                            it.copy(
+                                turnkeySessionActive = false,
+                                turnkeyOtpId = null,
+                                turnkeyOtpEncryptionBundle = null,
+                                turnkeyOtpCode = "",
+                                statusText = "Turnkey session expired — log in again"
+                            )
+                        }
+                    }
                 )
                 val evmAddress = runCatching { session.client?.getWalletAddress(WalletChain.EVM.chainId) }.getOrNull()
                 val solAddress = runCatching { session.client?.getWalletAddress(WalletChain.SOLANA.chainId) }.getOrNull()
@@ -270,6 +456,7 @@ class HomeViewModel(
                     "Turnkey.rainInit",
                     "success — isInitialized=${session.isInitialized} evm=$evmAddress sol=$solAddress"
                 )
+                persistRainCredentials(SessionStore.Provider.Turnkey)
                 _state.update {
                     it.copy(
                         isLoading = false,
@@ -298,6 +485,10 @@ class HomeViewModel(
         }
 
         SampleLog.i("Privy.otpInit", "starting email-OTP flow email=${SampleLog.maskEmail(s.privyEmail)}")
+        store.provider = SessionStore.Provider.Privy
+        store.privyAppId = s.privyAppId.trim()
+        store.privyAppClientId = s.privyAppClientId.trim()
+        store.privyEmail = s.privyEmail.trim()
         _state.update { it.copy(isLoading = true, statusText = "Initializing Privy...") }
         viewModelScope.launch {
             try {
@@ -388,6 +579,7 @@ class HomeViewModel(
         }
         SampleLog.i("Privy.rainInit", "initializing Rain w/ Privy")
         _state.update { it.copy(isLoading = true, statusText = "Initializing Rain with Privy...") }
+        val uiState = _state
         viewModelScope.launch {
             try {
                 val createdEvm = PrivyAuthSample.ensureEthereumWallet()
@@ -401,7 +593,20 @@ class HomeViewModel(
                 session.initializePrivy(
                     privy = PrivyAuthSample.privy,
                     rpcEndpoints = WalletChain.rpcEndpoints,
-                    walletAddress = null
+                    walletAddress = null,
+                    // Restart the OTP flow; a fresh login revives the provider (it watches the
+                    // process-wide Privy singleton), so Rain is not re-initialized.
+                    onSessionExpired = {
+                        SampleLog.w("Privy.session", "Privy session expired, re-auth required")
+                        uiState.update {
+                            it.copy(
+                                privySessionActive = false,
+                                privyOtpSent = false,
+                                privyOtpCode = "",
+                                statusText = "Privy session expired — log in again"
+                            )
+                        }
+                    }
                 )
                 val evmAddress = runCatching { session.client?.getWalletAddress(WalletChain.EVM.chainId) }.getOrNull()
                 val solAddress = runCatching { session.client?.getWalletAddress(WalletChain.SOLANA.chainId) }.getOrNull()
@@ -409,6 +614,7 @@ class HomeViewModel(
                     "Privy.rainInit",
                     "success — isInitialized=${session.isInitialized} evm=$evmAddress sol=$solAddress"
                 )
+                persistRainCredentials(SessionStore.Provider.Privy)
                 _state.update {
                     it.copy(
                         isLoading = false,
@@ -426,18 +632,22 @@ class HomeViewModel(
         }
     }
 
+    private fun persistRainCredentials(provider: SessionStore.Provider) {
+        store.provider = provider
+        store.rainApiKey = _state.value.rainApiKey.trim()
+        store.rainUserId = _state.value.userId.trim()
+    }
+
     fun clearSession() {
         SampleLog.i("Home", "clearing session (provider logout + SDK reset + UI reset)")
         viewModelScope.launch {
+            // Close the provider first so its watcher does not report the logout as a death.
+            session.reset()
+            store.clear()
             // Real logout so the next run requires fresh auth (and resume detects no session).
             TurnkeyAuthSample.logout()
             PrivyAuthSample.logout()
-            // Tear down the built RainSdk + resolved client so no stale provider survives
-            // into the next login.
-            session.reset()
-            _state.update {
-                HomeUiState(statusText = "Session Cleared", mode = it.mode)
-            }
+            _state.update { seededState(it.mode).copy(statusText = "Session Cleared") }
         }
     }
 }
@@ -445,7 +655,6 @@ class HomeViewModel(
 data class HomeUiState(
     val mode: WalletMode = WalletMode.Turnkey,
     val sessionToken: String = "",
-    // Dev-only defaults; clear before release.
     val rainApiKey: String = "",
     val userId: String = "",
     val turnkeyOrgId: String = "",
@@ -464,16 +673,25 @@ data class HomeUiState(
     val isInitialized: Boolean = false,
     val isRecovered: Boolean = false,
     val isLoading: Boolean = false,
-    val statusText: String = "Ready"
+    val statusText: String = "Ready",
+    val sessionStatus: WalletSessionStatus? = null,
+    /** Portal only: installed by "Update token" or handed to `onSessionTokenNeeded`. */
+    val replacementPortalToken: String = "",
 )
 
+private fun SessionStore.Provider.toMode(): WalletMode = when (this) {
+    SessionStore.Provider.Portal -> WalletMode.Portal
+    SessionStore.Provider.Turnkey -> WalletMode.Turnkey
+    SessionStore.Provider.Privy -> WalletMode.Privy
+}
+
 class HomeViewModelFactory(
-    private val session: RainSession
+    private val app: RainSampleApp
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(HomeViewModel::class.java)) {
-            return HomeViewModel(session) as T
+            return HomeViewModel(app) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

@@ -8,6 +8,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
+import io.privy.auth.AuthState
 import io.privy.auth.PrivyUser
 import io.privy.sdk.Privy
 import io.privy.wallet.ethereum.EmbeddedEthereumWallet
@@ -17,6 +18,7 @@ import io.privy.wallet.ethereum.EthereumRpcResponse
 import io.privy.wallet.transactions.GetTransactionsParams
 import io.privy.wallet.transactions.TransactionChain
 import io.privy.wallet.transactions.TransactionsPage
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
@@ -32,10 +34,12 @@ class PrivyManagerTest {
         val privy = mockk<Privy>()
         if (wallets == null) {
             coEvery { privy.getUser() } returns null
+            every { privy.authState } returns MutableStateFlow(AuthState.Unauthenticated)
         } else {
             val user = mockk<PrivyUser>()
             every { user.embeddedEthereumWallets } returns wallets
             coEvery { privy.getUser() } returns user
+            every { privy.authState } returns MutableStateFlow(AuthState.Authenticated(user))
         }
         return privy
     }

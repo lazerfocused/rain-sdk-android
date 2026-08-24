@@ -9,6 +9,7 @@ import com.rain.sdk.provider.ProviderId
 import com.rain.sdk.provider.RainProvider
 import io.portalhq.android.Portal
 import io.portalhq.android.mpc.data.FeatureFlags
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Configuration for the Portal provider.
@@ -16,10 +17,20 @@ import io.portalhq.android.mpc.data.FeatureFlags
  * @param sessionToken A valid Portal session token (Portal API key).
  * @param chainId Optional default chain id for Portal's legacy single-chain operations. When null,
  *                Avalanche Mainnet is used if configured, otherwise the first configured chain.
+ * @param sessionPolicy Refresh, auth-guard and transient-retry behavior for every wallet call.
+ * @param onSessionTokenNeeded Called when Portal rejects the token: return a fresh token for the
+ *                             SAME Portal client (the SDK rebuilds the client and retries once), or
+ *                             null to decline. Runs under the refresh lock — never call back into
+ *                             this provider from it.
+ * @param onSessionExpired Fired once per session death when no fresh token could be installed.
+ *                         Not on the main thread; restart authentication from here.
  */
 class PortalConfig(
     val sessionToken: String,
     val chainId: Int? = null,
+    val sessionPolicy: PortalSessionPolicy = PortalSessionPolicy(),
+    val onSessionTokenNeeded: (suspend () -> String?)? = null,
+    val onSessionExpired: (() -> Unit)? = null,
 )
 
 /**
@@ -30,6 +41,7 @@ class PortalConfig(
  *
  * @param onPortalCreated Optional hook invoked with the underlying [Portal] instance once it is
  *   constructed during resolution, for Portal-specific APIs like `backupWallet`/`recoverWallet`.
+ *   Re-invoked after every session-token refresh, because the refresh rebuilds the client.
  */
 class PortalProvider internal constructor(
     private val config: PortalConfig,
@@ -47,6 +59,45 @@ class PortalProvider internal constructor(
     /** Portal is an EVM MPC signer with key export/recovery via MPC backups. */
     override val capabilities: Set<Capability> =
         setOf(Capability.EXPORT, Capability.RECOVERY)
+
+    @Volatile
+    private var portalManager: PortalManager? = null
+
+    private val coordinator: PortalSessionCoordinator by lazy {
+        PortalSessionCoordinator(
+            policy = config.sessionPolicy,
+            onSessionTokenNeeded = config.onSessionTokenNeeded,
+            onSessionExpired = config.onSessionExpired,
+            installToken = { token ->
+                val manager = portalManager ?: throw RainError.SdkNotInitialized()
+                manager.reinitialize(token)
+                onPortalCreated?.invoke(manager.getPortalInstance())
+            },
+        )
+    }
+
+    /** The session over time, driven by call outcomes and refreshes (Portal has no auth state). */
+    val sessionState: StateFlow<PortalSessionState> get() = coordinator.sessionStates
+
+    /** Snapshot of [sessionState] right now. */
+    fun currentSessionState(): PortalSessionState = coordinator.currentState()
+
+    /** Re-mints via `onSessionTokenNeeded` and rebuilds the client; `TokenExpired` on failure. */
+    suspend fun refreshSession() {
+        if (portalManager == null) throw RainError.SdkNotInitialized()
+        coordinator.refreshNow()
+    }
+
+    /** Installs a host-minted token (same Portal client) and rebuilds the client around it. */
+    suspend fun updateSessionToken(sessionToken: String) {
+        if (portalManager == null) throw RainError.SdkNotInitialized()
+        coordinator.installNow(sessionToken)
+    }
+
+    /** Silences the session hooks; call when discarding this provider. */
+    fun close() {
+        coordinator.stop()
+    }
 
     override suspend fun create(context: ProviderContext): WalletProvider {
         // Portal treats the session token as its API key; an empty one would fail every call
@@ -69,17 +120,18 @@ class PortalProvider internal constructor(
                 rpcEndpoints.keys.first()
             }
 
-        val portalManager = portalManagerFactory()
-        portalManager.initialize(
+        val manager = portalManagerFactory()
+        manager.initialize(
             apiKey = config.sessionToken,
             legacyEthChainId = legacyChainId,
             rpcConfig = eip155RpcConfig,
             featureFlags = FeatureFlags(isMultiBackupEnabled = true),
             autoApprove = true,
         )
-        onPortalCreated?.invoke(portalManager.getPortalInstance())
+        portalManager = manager
+        onPortalCreated?.invoke(manager.getPortalInstance())
 
-        return PortalWalletProvider(portalManager, context.tokenStore)
+        return PortalWalletProvider(manager, context.tokenStore, coordinator)
     }
 
     private companion object {

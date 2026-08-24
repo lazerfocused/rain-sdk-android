@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -52,7 +53,7 @@ class MainActivity : ComponentActivity() {
 fun SampleApp() {
     val navController = rememberNavController()
     var selectedChain by remember { mutableStateOf(WalletChain.EVM) }
-    val session = remember { RainSession() }
+    val session = (LocalContext.current.applicationContext as RainSampleApp).session
 
     Scaffold(
         modifier = Modifier.fillMaxSize()

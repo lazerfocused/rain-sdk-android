@@ -1,6 +1,7 @@
 package com.rain.sdk.turnkey
 
 import com.turnkey.core.TurnkeyContext
+import com.turnkey.core.models.AuthState
 import com.turnkey.core.models.Session
 import com.turnkey.core.models.Wallet
 import com.turnkey.http.TurnkeyClient
@@ -17,6 +18,7 @@ import com.turnkey.types.TSolSendTransactionResponse
 import com.turnkey.types.V1HashFunction
 import com.turnkey.types.V1PayloadEncoding
 import com.turnkey.types.V1SignRawPayloadResult
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Narrow internal abstractions over the Turnkey Kotlin SDK so the wallet provider can be
@@ -50,8 +52,13 @@ internal interface TurnkeyContextProtocol {
     val wallets: List<Wallet>
     val session: Session?
     val turnkeyClient: TurnkeyClientProtocol?
+    val authState: StateFlow<AuthState>
+    val sessionFlow: StateFlow<Session?>
 
     suspend fun refreshWallets()
+
+    /** Refreshes the selected session; null [expirationSeconds] uses Turnkey's default TTL. */
+    suspend fun refreshSession(expirationSeconds: String?)
 
     suspend fun signRawPayload(
         signWith: String,
@@ -79,8 +86,22 @@ internal class TurnkeyContextAdapter(
     override val turnkeyClient: TurnkeyClientProtocol?
         get() = runCatching { TurnkeyClientAdapter(context.client) }.getOrNull()
 
+    override val authState: StateFlow<AuthState>
+        get() = context.authState
+
+    override val sessionFlow: StateFlow<Session?>
+        get() = context.session
+
     override suspend fun refreshWallets() {
         context.refreshWallets()
+    }
+
+    override suspend fun refreshSession(expirationSeconds: String?) {
+        if (expirationSeconds == null) {
+            context.refreshSession()
+        } else {
+            context.refreshSession(expirationSeconds = expirationSeconds)
+        }
     }
 
     override suspend fun signRawPayload(

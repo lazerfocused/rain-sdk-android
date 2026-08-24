@@ -1,6 +1,7 @@
 package com.rain.sdk.sample.screens
 
 import android.app.Application
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,7 +13,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -35,15 +39,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.rain.sdk.sample.RainSampleApp
 import com.rain.sdk.sample.RainSession
 import com.rain.sdk.sample.Screen
+import com.rain.sdk.sample.SessionHealth
 import com.rain.sdk.sample.WalletChain
+import com.rain.sdk.sample.WalletSessionStatus
 
 data class FeatureAction(
     val emoji: String,
@@ -66,7 +74,9 @@ fun HomeScreen(
     selectedChain: WalletChain,
     onChainSelected: (WalletChain) -> Unit,
     onNavigate: (Screen) -> Unit,
-    viewModel: HomeViewModel = viewModel(factory = HomeViewModelFactory(session))
+    viewModel: HomeViewModel = viewModel(
+        factory = HomeViewModelFactory(LocalContext.current.applicationContext as RainSampleApp)
+    )
 ) {
     val state by viewModel.state.collectAsState()
     val application = LocalContext.current.applicationContext as Application
@@ -86,9 +96,10 @@ fun HomeScreen(
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
+        // Locked while a provider is resolved so the session card always describes `mode`.
         ModeSelector(
             mode = state.mode,
-            enabled = !state.isInitialized,
+            enabled = !state.isInitialized && state.sessionStatus == null,
             onModeChanged = viewModel::onModeChanged
         )
 
@@ -135,7 +146,22 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (state.isRecovered) {
+        // Stays visible when the session is dead so the hidden feature grid is explained.
+        state.sessionStatus?.let { status ->
+            SessionSection(
+                status = status,
+                mode = state.mode,
+                isLoading = state.isLoading,
+                replacementPortalToken = state.replacementPortalToken,
+                onReplacementPortalTokenChanged = viewModel::onReplacementPortalTokenChanged,
+                onRefreshSession = viewModel::refreshSession,
+                onUpdatePortalToken = viewModel::updatePortalSessionToken
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        val sessionUsable = state.sessionStatus?.health != SessionHealth.Dead
+        if (state.isRecovered && sessionUsable) {
             // Turnkey and Privy hold a Solana account; Portal is EVM-only. Force the selection
             // back to an EVM chain so Portal never reads/signs on Solana.
             LaunchedEffect(state.mode, selectedChain) {
@@ -194,6 +220,107 @@ fun HomeScreen(
             )
         }
     }
+}
+
+/** `sessionState`, `refreshSession()` and, for Portal, `updateSessionToken()`. */
+@Composable
+private fun SessionSection(
+    status: WalletSessionStatus,
+    mode: WalletMode,
+    isLoading: Boolean,
+    replacementPortalToken: String,
+    onReplacementPortalTokenChanged: (String) -> Unit,
+    onRefreshSession: () -> Unit,
+    onUpdatePortalToken: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Wallet Session",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .background(status.health.indicatorColor(), CircleShape)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = status.label,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            status.detail?.let { detail ->
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Portal's refresh goes through onSessionTokenNeeded, which needs a replacement token.
+            val canRefresh = !isLoading &&
+                (mode != WalletMode.Portal || replacementPortalToken.isNotBlank())
+            OutlinedButton(
+                onClick = onRefreshSession,
+                enabled = canRefresh,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Refresh session")
+            }
+
+            if (mode == WalletMode.Portal) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Replacement token: \"Update token\" installs it now (updateSessionToken); " +
+                        "Refresh and any rejected call take it via onSessionTokenNeeded.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = replacementPortalToken,
+                    onValueChange = onReplacementPortalTokenChanged,
+                    label = { Text("Replacement session token") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    singleLine = true
+                )
+                OutlinedButton(
+                    onClick = onUpdatePortalToken,
+                    enabled = replacementPortalToken.isNotBlank() && !isLoading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Update token")
+                }
+            }
+        }
+    }
+}
+
+private val HealthyGreen = Color(0xFF2E7D32)
+private val TransitionalAmber = Color(0xFFF9A825)
+
+@Composable
+private fun SessionHealth.indicatorColor(): Color = when (this) {
+    SessionHealth.Healthy -> HealthyGreen
+    SessionHealth.Transitional -> TransitionalAmber
+    SessionHealth.Dead -> MaterialTheme.colorScheme.error
+    SessionHealth.Unknown -> MaterialTheme.colorScheme.outline
 }
 
 @Composable

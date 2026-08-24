@@ -1,8 +1,11 @@
 package com.rain.sdk.turnkey
 
 import com.turnkey.core.TurnkeyContext
+import com.turnkey.core.models.AuthState
 import com.turnkey.core.models.Session
 import com.turnkey.core.models.Wallet
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import com.turnkey.types.Externaldatav1Timestamp
 import com.turnkey.types.TEthSendTransactionBody
 import com.turnkey.types.TEthSendTransactionResponse
@@ -192,7 +195,7 @@ internal object ThrowingTurnkeyHistory : TurnkeyHistoryProtocol {
 
 internal class MockTurnkey(
     override var wallets: List<Wallet> = listOf(defaultWallet()),
-    override var session: Session? = defaultSession(),
+    session: Session? = defaultSession(),
     override var turnkeyClient: TurnkeyClientProtocol? = MockTurnkeyClient(),
     var mockSignature: V1SignRawPayloadResult = V1SignRawPayloadResult(
         r = "1".repeat(64),
@@ -208,14 +211,47 @@ internal class MockTurnkey(
         val hashFunction: V1HashFunction
     )
 
+    // Backed by flows so coordinator/state tests can observe assignments like production code
+    // observes the Turnkey singleton.
+    private val sessionStateFlow = MutableStateFlow(session)
+    override val sessionFlow: StateFlow<Session?> get() = sessionStateFlow
+    override var session: Session?
+        get() = sessionStateFlow.value
+        set(value) {
+            sessionStateFlow.value = value
+        }
+
+    val authStateFlow = MutableStateFlow(
+        if (session != null) AuthState.authenticated else AuthState.unauthenticated
+    )
+    override val authState: StateFlow<AuthState> get() = authStateFlow
+
     var refreshWalletsCallCount: Int = 0
     val signRawPayloadCalls = mutableListOf<SignRawPayloadCall>()
 
     /** When set, [signRawPayload] throws this instead of returning [mockSignature]. */
     var signRawPayloadError: Exception? = null
 
+    var refreshSessionCallCount: Int = 0
+
+    /** TTLs passed to [refreshSession], null meaning "Turnkey default". */
+    val refreshSessionCalls = mutableListOf<String?>()
+
+    /** When set, [refreshSession] throws this. */
+    var refreshSessionError: Exception? = null
+
+    /** Runs after a recorded [refreshSession] call — install the refreshed session here. */
+    var onRefreshSession: (() -> Unit)? = null
+
     override suspend fun refreshWallets() {
         refreshWalletsCallCount++
+    }
+
+    override suspend fun refreshSession(expirationSeconds: String?) {
+        refreshSessionCallCount++
+        refreshSessionCalls += expirationSeconds
+        refreshSessionError?.let { throw it }
+        onRefreshSession?.invoke()
     }
 
     override suspend fun signRawPayload(
@@ -245,6 +281,14 @@ internal class MockTurnkey(
             token = "jwt",
             sessionType = "read_write"
         )
+
+        /** A session whose JWT expiry has already passed. */
+        fun expiredSession(): Session =
+            defaultSession().copy(expiry = System.currentTimeMillis() / 1000.0 - 60)
+
+        /** A session inside the coordinator's refresh buffer but not yet expired. */
+        fun nearExpirySession(remainingSeconds: Long = 10): Session =
+            defaultSession().copy(expiry = System.currentTimeMillis() / 1000.0 + remainingSeconds)
 
         fun defaultWallet(): Wallet = Wallet(
             id = "wallet-id",

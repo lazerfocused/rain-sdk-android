@@ -25,6 +25,8 @@ import timber.log.Timber
  */
 internal class PrivyManager(
     private val privy: Privy,
+    // Guards every Privy call: auth-state check, transient backoff, typed session death.
+    private val sessions: PrivySessionCoordinator = PrivySessionCoordinator(privy),
 ) {
 
     /**
@@ -57,7 +59,7 @@ internal class PrivyManager(
 
     /** The signing wallet's address. */
     suspend fun getAddress(addressOverride: String?): String =
-        resolveWallet(addressOverride).address
+        sessions.executeRead { resolveWallet(addressOverride).address }
 
     /**
      * Signs EIP-712 typed data via `eth_signTypedData_v4`. Returns the 0x-prefixed signature.
@@ -65,10 +67,10 @@ internal class PrivyManager(
     suspend fun signTypedData(
         walletAddress: String,
         typedDataJson: String,
-    ): String {
+    ): String = sessions.executeWrite {
         val wallet = resolveWallet(walletAddress)
         val privyTypedData = toPrivyTypedDataJson(typedDataJson)
-        return request(wallet, EthereumRpcRequest.ethSignTypedDataV4(wallet.address, privyTypedData))
+        request(wallet, EthereumRpcRequest.ethSignTypedDataV4(wallet.address, privyTypedData))
     }
 
     /**
@@ -97,9 +99,9 @@ internal class PrivyManager(
         walletAddress: String,
         rpcUrl: String,
         transactionJson: String,
-    ): String {
+    ): String = sessions.executeWrite {
         val wallet = resolveWallet(walletAddress)
-        return sendMutex.withLock {
+        sendMutex.withLock {
             // Privy's EthereumChain.Custom (privy-core 0.13.0) only carries an RPC URL; no chain
             // variant accepts both a custom RPC URL and a chain id. The chain id still reaches the
             // node because [transactionJson] embeds it, and the named SupportedEthereumChain values
@@ -119,10 +121,12 @@ internal class PrivyManager(
     suspend fun getTransactions(
         walletAddress: String?,
         params: GetTransactionsParams<TransactionChain.Evm>,
-    ): TransactionsPage = resolveWallet(walletAddress).getTransactions(params).getOrElse { error ->
-        Timber.e(error, "Rain SDK: Privy getTransactions failed")
-        PrivyErrorMapping.mapOrNull(error)?.let { throw it }
-        throw error
+    ): TransactionsPage = sessions.executeRead {
+        resolveWallet(walletAddress).getTransactions(params).getOrElse { error ->
+            Timber.e(error, "Rain SDK: Privy getTransactions failed")
+            PrivyErrorMapping.mapOrNull(error)?.let { throw it }
+            throw error
+        }
     }
 
     // ---------- Solana ----------
@@ -140,7 +144,8 @@ internal class PrivyManager(
     }
 
     /** The Solana signing wallet's base58 address. */
-    suspend fun getSolanaAddress(): String = resolveSolanaWallet().address
+    suspend fun getSolanaAddress(): String =
+        sessions.executeRead { resolveSolanaWallet().address }
 
     /**
      * Signs an unsigned Solana transaction and broadcasts it, returning the base58 signature.
@@ -152,7 +157,7 @@ internal class PrivyManager(
         transaction: ByteArray,
         cluster: SolanaCluster,
         rpcUrl: String,
-    ): String {
+    ): String = sessions.executeWrite {
         val wallet = resolveSolanaWallet()
         val result = try {
             wallet.provider.signAndSendTransaction(transaction, cluster, rpcUrl)
@@ -163,7 +168,7 @@ internal class PrivyManager(
             PrivyErrorMapping.mapOrNull(e)?.let { throw it }
             throw e
         }
-        return result.getOrElse { error ->
+        result.getOrElse { error ->
             Timber.e(error, "Rain SDK: Privy Solana signAndSendTransaction failed")
             PrivyErrorMapping.mapOrNull(error)?.let { throw it }
             throw error
@@ -173,10 +178,12 @@ internal class PrivyManager(
     /** One page of Solana history via Privy's indexer; error handling as in [getTransactions]. */
     suspend fun getSolanaTransactions(
         params: GetTransactionsParams<TransactionChain.Solana>,
-    ): TransactionsPage = resolveSolanaWallet().getTransactions(params).getOrElse { error ->
-        Timber.e(error, "Rain SDK: Privy Solana getTransactions failed")
-        PrivyErrorMapping.mapOrNull(error)?.let { throw it }
-        throw error
+    ): TransactionsPage = sessions.executeRead {
+        resolveSolanaWallet().getTransactions(params).getOrElse { error ->
+            Timber.e(error, "Rain SDK: Privy Solana getTransactions failed")
+            PrivyErrorMapping.mapOrNull(error)?.let { throw it }
+            throw error
+        }
     }
 
     /**

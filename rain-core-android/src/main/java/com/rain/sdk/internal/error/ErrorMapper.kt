@@ -115,13 +115,7 @@ internal class ErrorMapper {
      * the Turnkey SDK exposes the status code.
      */
     private fun mapTurnkeyHttpStatus(e: Throwable): RainError? {
-        val message = e.message ?: return null
-        if (!message.startsWith(TURNKEY_HTTP_ERROR_PREFIX)) return null
-        val status = TURNKEY_HTTP_STATUS_REGEX.find(message)
-            ?.groupValues?.getOrNull(1)
-            ?.toIntOrNull()
-            ?: return null
-        return when (status) {
+        return when (val status = turnkeyHttpStatus(e) ?: return null) {
             401 -> RainError.TokenExpired()
             403 -> RainError.Unauthorized("Turnkey rejected the request: HTTP $status")
             else -> null
@@ -150,10 +144,23 @@ internal class ErrorMapper {
         return e.message?.contains("insufficient", ignoreCase = true) ?: false
     }
 
-    private companion object {
+    internal companion object {
         const val TURNKEY_HTTP_ERROR_PREFIX = "HTTP error"
 
         /** Trailing ": <code>" or "Code: <code>" — the two shapes the Turnkey SDK generates. */
         val TURNKEY_HTTP_STATUS_REGEX = Regex("""(?:Code:\s*|:\s*)(\d{3})\s*$""")
+
+        /**
+         * The HTTP status carried in a Turnkey SDK failure message, or null when the throwable
+         * is not a recognizable Turnkey HTTP failure. Shared with the session coordinator's
+         * retry classification.
+         */
+        fun turnkeyHttpStatus(e: Throwable): Int? {
+            val message = e.message ?: return null
+            if (!message.startsWith(TURNKEY_HTTP_ERROR_PREFIX)) return null
+            return TURNKEY_HTTP_STATUS_REGEX.find(message)
+                ?.groupValues?.getOrNull(1)
+                ?.toIntOrNull()
+        }
     }
 }

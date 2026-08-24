@@ -5,7 +5,7 @@ Android SDK that connects an MPC or embedded wallet — [Portal](https://portalh
 messages, compose withdrawal transactions, sign and submit via a registered wallet provider, read
 balances and history, and estimate fees. Works on EVM chains and Solana.
 
-- **Portal wallet integration** — Register a `PortalProvider` with a Portal session token and resolve a client; use the connected MPC wallet for signing and sending transactions.
+- **Portal wallet integration** — Register a `PortalProvider` with a Portal session token and resolve a client; use the connected MPC wallet for signing and sending transactions. See [docs/PORTAL_SUPPORT.md](docs/PORTAL_SUPPORT.md) for session refresh and retry behavior.
 - **Turnkey wallet integration** — Register a `TurnkeyProvider` with an authenticated `TurnkeyContext` (passkeys / auth proxy / OAuth / OTP handled outside Rain by the Turnkey Kotlin SDK). See [docs/TURNKEY_SUPPORT.md](docs/TURNKEY_SUPPORT.md).
 - **Privy wallet integration** — Register a `PrivyProvider` with an authenticated `Privy` instance; embedded EVM and Solana wallets are used for custody.
 - **Solana support** — Native SOL and SPL transfers, balances, history, and collateral withdrawal, on the same `RainClient` methods as EVM. See [Solana](#9-solana).
