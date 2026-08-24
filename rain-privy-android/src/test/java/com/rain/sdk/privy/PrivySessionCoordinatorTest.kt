@@ -1,0 +1,438 @@
+package com.rain.sdk.privy
+
+import com.google.common.truth.Truth.assertThat
+import com.rain.sdk.internal.error.RainError
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.privy.auth.AuthState
+import io.privy.auth.AuthenticationException
+import io.privy.auth.PrivyUser
+import io.privy.network.NoNetworkException
+import io.privy.network.PrivyApiException
+import io.privy.sdk.Privy
+import java.io.IOException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertThrows
+import org.junit.Test
+
+class PrivySessionCoordinatorTest {
+
+    private class RecordingDelay {
+        val delays = mutableListOf<Long>()
+        val fn: suspend (Long) -> Unit = { delays += it }
+    }
+
+    private fun authenticatedPrivy(
+        auth: MutableStateFlow<AuthState>,
+        user: PrivyUser = mockk(),
+    ): Privy {
+        val privy = mockk<Privy>()
+        every { privy.authState } returns auth
+        coEvery { privy.getUser() } returns user
+        return privy
+    }
+
+    private fun coordinator(
+        privy: Privy,
+        policy: PrivySessionPolicy = PrivySessionPolicy(),
+        onSessionExpired: (() -> Unit)? = null,
+        delayRecorder: RecordingDelay = RecordingDelay(),
+    ) = PrivySessionCoordinator(
+        privy = privy,
+        policy = policy,
+        onSessionExpired = onSessionExpired,
+        retryDelay = delayRecorder.fn,
+    )
+
+    private fun apiException(status: Int?) =
+        PrivyApiException(status, null, "api failure", RuntimeException("api failure"))
+
+    // ---------- auth-state guard ----------
+
+    @Test
+    fun `unauthenticated state throws TokenExpired without running the call`() {
+        val auth = MutableStateFlow<AuthState>(AuthState.Unauthenticated)
+        val privy = mockk<Privy>()
+        every { privy.authState } returns auth
+        var blockRuns = 0
+        val coordinator = coordinator(privy)
+
+        assertThrows(RainError.TokenExpired::class.java) {
+            runBlocking { coordinator.executeRead { blockRuns++ } }
+        }
+        assertThat(blockRuns).isEqualTo(0)
+    }
+
+    @Test
+    fun `never-logged-in user gets TokenExpired but the expiry hook stays silent`() {
+        val auth = MutableStateFlow<AuthState>(AuthState.Unauthenticated)
+        val privy = mockk<Privy>()
+        every { privy.authState } returns auth
+        var hookCalls = 0
+        val coordinator = coordinator(privy, onSessionExpired = { hookCalls++ })
+
+        assertThrows(RainError.TokenExpired::class.java) {
+            runBlocking { coordinator.executeRead { } }
+        }
+        assertThat(hookCalls).isEqualTo(0)
+    }
+
+    @Test
+    fun `call during credential restore waits for NotReady to resolve instead of expiring`() = runTest {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.NotReady)
+        val privy = authenticatedPrivy(auth, user)
+        var hookCalls = 0
+        val coordinator = PrivySessionCoordinator(
+            privy = privy,
+            onSessionExpired = { hookCalls++ },
+            retryDelay = { },
+        )
+
+        val call = async { coordinator.executeRead { "ok" } }
+        runCurrent()
+        assertThat(call.isCompleted).isFalse()
+
+        auth.value = AuthState.Authenticated(user)
+        runCurrent()
+
+        assertThat(call.await()).isEqualTo("ok")
+        assertThat(hookCalls).isEqualTo(0)
+    }
+
+    // ---------- auth-failure surfacing ----------
+
+    @Test
+    fun `Privy auth failure surfaces TokenExpired and fires the hook once`() {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        var hookCalls = 0
+        val coordinator = coordinator(privy, onSessionExpired = { hookCalls++ })
+
+        repeat(2) {
+            assertThrows(RainError.TokenExpired::class.java) {
+                runBlocking {
+                    coordinator.executeRead {
+                        throw AuthenticationException("User must be authenticated before calling refresh.")
+                    }
+                }
+            }
+        }
+        assertThat(hookCalls).isEqualTo(1)
+    }
+
+    @Test
+    fun `HTTP 401 from the Privy indexer surfaces TokenExpired without retries`() {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        var attempts = 0
+        val coordinator = coordinator(privy)
+
+        assertThrows(RainError.TokenExpired::class.java) {
+            runBlocking {
+                coordinator.executeRead {
+                    attempts++
+                    throw apiException(401)
+                }
+            }
+        }
+        assertThat(attempts).isEqualTo(1)
+    }
+
+    @Test
+    fun `auth failure on a write is never retried`() {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        var attempts = 0
+        val coordinator = coordinator(privy)
+
+        assertThrows(RainError.TokenExpired::class.java) {
+            runBlocking {
+                coordinator.executeWrite {
+                    attempts++
+                    throw AuthenticationException("not logged in")
+                }
+            }
+        }
+        assertThat(attempts).isEqualTo(1)
+    }
+
+    // ---------- transient backoff ----------
+
+    @Test
+    fun `transient 500 on a read retries with exponential backoff and then succeeds`() = runBlocking {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        val delays = RecordingDelay()
+        val coordinator = coordinator(privy, delayRecorder = delays)
+        var failures = 2
+
+        val result = coordinator.executeRead {
+            if (failures > 0) {
+                failures--
+                throw apiException(500)
+            }
+            "ok"
+        }
+
+        assertThat(result).isEqualTo("ok")
+        assertThat(delays.delays).containsExactly(500L, 1000L).inOrder()
+    }
+
+    @Test
+    fun `transient failures beyond maxTransientRetries surface the original error`() {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        val delays = RecordingDelay()
+        val coordinator = coordinator(
+            privy,
+            policy = PrivySessionPolicy(maxTransientRetries = 2),
+            delayRecorder = delays,
+        )
+        var attempts = 0
+
+        val thrown = assertThrows(IOException::class.java) {
+            runBlocking {
+                coordinator.executeRead<String> {
+                    attempts++
+                    throw IOException("connection reset")
+                }
+            }
+        }
+        assertThat(thrown).hasMessageThat().contains("connection reset")
+        assertThat(attempts).isEqualTo(3)
+        assertThat(delays.delays).hasSize(2)
+    }
+
+    @Test
+    fun `backoff delays are capped at maxRetryDelayMs`() {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        val delays = RecordingDelay()
+        val coordinator = coordinator(
+            privy,
+            policy = PrivySessionPolicy(
+                maxTransientRetries = 4,
+                initialRetryDelayMs = 500,
+                maxRetryDelayMs = 1_000,
+            ),
+            delayRecorder = delays,
+        )
+
+        assertThrows(NoNetworkException::class.java) {
+            runBlocking { coordinator.executeRead<String> { throw NoNetworkException } }
+        }
+        assertThat(delays.delays).containsExactly(500L, 1000L, 1000L, 1000L).inOrder()
+    }
+
+    @Test
+    fun `transient failure on a write is not retried`() {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        var attempts = 0
+        val coordinator = coordinator(privy)
+
+        assertThrows(NoNetworkException::class.java) {
+            runBlocking {
+                coordinator.executeWrite<String> {
+                    attempts++
+                    throw NoNetworkException
+                }
+            }
+        }
+        assertThat(attempts).isEqualTo(1)
+    }
+
+    @Test
+    fun `non-transient non-auth errors are not retried on reads`() {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        var attempts = 0
+        val coordinator = coordinator(privy)
+
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                coordinator.executeRead<String> {
+                    attempts++
+                    throw IllegalStateException("bad request shape")
+                }
+            }
+        }
+        assertThat(attempts).isEqualTo(1)
+    }
+
+    // ---------- manual refresh ----------
+
+    @Test
+    fun `refreshNow refreshes through the Privy user`() = runBlocking {
+        val user = mockk<PrivyUser>()
+        coEvery { user.refresh() } returns Result.success(Unit)
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        val coordinator = coordinator(privy)
+
+        coordinator.refreshNow()
+    }
+
+    @Test
+    fun `refreshNow surfaces TokenExpired and fires the hook when the refresh fails`() {
+        val user = mockk<PrivyUser>()
+        coEvery { user.refresh() } returns Result.failure(AuthenticationException("expired"))
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        var hookCalls = 0
+        val coordinator = coordinator(privy, onSessionExpired = { hookCalls++ })
+
+        assertThrows(RainError.TokenExpired::class.java) {
+            runBlocking { coordinator.refreshNow() }
+        }
+        assertThat(hookCalls).isEqualTo(1)
+    }
+
+    // ---------- session state ----------
+
+    @Test
+    fun `currentState reflects the Privy auth state`() {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.NotReady)
+        val privy = mockk<Privy>()
+        every { privy.authState } returns auth
+        val coordinator = coordinator(privy)
+
+        assertThat(coordinator.currentState()).isEqualTo(PrivySessionState.Loading)
+
+        auth.value = AuthState.Authenticated(user)
+        assertThat(coordinator.currentState()).isEqualTo(PrivySessionState.Active)
+
+        auth.value = mockk<AuthState.AuthenticatedUnverified>()
+        assertThat(coordinator.currentState()).isEqualTo(PrivySessionState.Unverified)
+
+        auth.value = AuthState.Unauthenticated
+        assertThat(coordinator.currentState()).isEqualTo(PrivySessionState.Unauthenticated)
+    }
+
+    // ---------- passive watcher ----------
+
+    @Test
+    fun `watcher fires the hook and death callbacks once when an active session dies`() = runTest {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        var hookCalls = 0
+        var evictions = 0
+        val coordinator = PrivySessionCoordinator(
+            privy = privy,
+            onSessionExpired = { hookCalls++ },
+            retryDelay = { },
+        )
+        coordinator.onSessionDeath { evictions++ }
+        val monitorScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        coordinator.startMonitoring(monitorScope)
+        runCurrent()
+
+        auth.value = AuthState.Unauthenticated
+        runCurrent()
+
+        assertThat(hookCalls).isEqualTo(1)
+        assertThat(evictions).isEqualTo(1)
+
+        // A repeated emission must not re-fire for the same death.
+        auth.value = AuthState.NotReady
+        runCurrent()
+        auth.value = AuthState.Unauthenticated
+        runCurrent()
+        assertThat(hookCalls).isEqualTo(1)
+        monitorScope.cancel()
+    }
+
+    @Test
+    fun `watcher fires when an active session dies through a NotReady transition`() = runTest {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        var hookCalls = 0
+        val coordinator = PrivySessionCoordinator(
+            privy = privy,
+            onSessionExpired = { hookCalls++ },
+            retryDelay = { },
+        )
+        val monitorScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        coordinator.startMonitoring(monitorScope)
+        runCurrent()
+
+        auth.value = AuthState.NotReady
+        runCurrent()
+        auth.value = AuthState.Unauthenticated
+        runCurrent()
+
+        assertThat(hookCalls).isEqualTo(1)
+        monitorScope.cancel()
+    }
+
+    @Test
+    fun `hook re-arms after a re-login and fires again for a second death`() = runTest {
+        val user = mockk<PrivyUser>()
+        val auth = MutableStateFlow<AuthState>(AuthState.Authenticated(user))
+        val privy = authenticatedPrivy(auth, user)
+        var hookCalls = 0
+        val coordinator = PrivySessionCoordinator(
+            privy = privy,
+            onSessionExpired = { hookCalls++ },
+            retryDelay = { },
+        )
+        val monitorScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        coordinator.startMonitoring(monitorScope)
+        runCurrent()
+
+        auth.value = AuthState.Unauthenticated
+        runCurrent()
+        assertThat(hookCalls).isEqualTo(1)
+
+        // Re-login re-arms; a second death must fire again.
+        auth.value = AuthState.Authenticated(user)
+        runCurrent()
+        auth.value = AuthState.Unauthenticated
+        runCurrent()
+        assertThat(hookCalls).isEqualTo(2)
+        monitorScope.cancel()
+    }
+
+    @Test
+    fun `watcher stays silent for a user who never logged in`() = runTest {
+        val auth = MutableStateFlow<AuthState>(AuthState.NotReady)
+        val privy = mockk<Privy>()
+        every { privy.authState } returns auth
+        var hookCalls = 0
+        val coordinator = PrivySessionCoordinator(
+            privy = privy,
+            onSessionExpired = { hookCalls++ },
+            retryDelay = { },
+        )
+        val monitorScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        coordinator.startMonitoring(monitorScope)
+        runCurrent()
+
+        auth.value = AuthState.Unauthenticated
+        runCurrent()
+
+        assertThat(hookCalls).isEqualTo(0)
+        monitorScope.cancel()
+    }
+}

@@ -5,6 +5,11 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
+
+plugins {
+    // Auto-provisions the JDK 24 unit-test toolchain when it is not installed locally.
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
@@ -15,5 +20,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "rain-sdk-android"
-include(":rain-sdk")
+include(":rain-core-android")
+include(":rain-portal-android")
+include(":rain-privy-android")
 include(":app")
