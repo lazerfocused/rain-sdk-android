@@ -21,8 +21,11 @@ privy = "0.13.1"
 # Security: pin Turnkey transitive deps above CVE-affected versions.
 # bitcoinj < 0.17.1 = GHSA-hfcf-v2f8-x9pc (P2PKH/P2WPKH verify bypass).
 # protobuf-javalite < 3.25.5 = GHSA-735f-pc8j-v9w8 (DoS).
+# bcprov-jdk15to18 is the single BC artifact on the classpath (bcprov-jdk18on is excluded
+# project-wide); floor it explicitly rather than relying on bitcoinj to drag it past 1.82.
 bitcoinj = "0.17.1"
 protobuf-javalite = "3.25.5"
+bouncycastle = "1.83"
 web3j = "4.10.0"
 timber = "5.0.1"
 okhttp = "5.1.0"
@@ -70,6 +73,7 @@ web3j-core = { module = "org.web3j:core", version.ref = "web3j" }
 # Security pins (CVE patches) for Turnkey transitive deps.
 bitcoinj-core = { module = "org.bitcoinj:bitcoinj-core", version.ref = "bitcoinj" }
 protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf-javalite" }
+bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk15to18", version.ref = "bouncycastle" }
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 okhttp-logging = { module = "com.squareup.okhttp3:logging-interceptor", version.ref = "okhttp" }

@@ -59,12 +59,20 @@ dependencies {
     // the bumped versions; they only raise versions, never downgrade.
     //   bitcoinj < 0.17.1 -> GHSA-hfcf-v2f8-x9pc (P2PKH/P2WPKH verify bypass)
     //   protobuf-javalite < 3.25.5 -> GHSA-735f-pc8j-v9w8 (DoS)
+    //   bcprov-jdk15to18 >= 1.83 -> the one BC artifact kept on the classpath (jdk18on is
+    //     excluded above); floored on purpose, not via whichever transitive happens to win.
     constraints {
         api(libs.bitcoinj.core) {
             because("CVE GHSA-hfcf-v2f8-x9pc: P2PKH/P2WPKH verification bypass in bitcoinj < 0.17.1")
         }
         api(libs.protobuf.javalite) {
             because("CVE GHSA-735f-pc8j-v9w8: DoS in protobuf-javalite < 3.25.5")
+        }
+        api(libs.bouncycastle.bcprov) {
+            because(
+                "Bouncy Castle security floor: bcprov-jdk15to18 replaces web3j's CVE-affected " +
+                    "bcprov-jdk18on:1.73 and must stay >= 1.83 regardless of Turnkey/bitcoinj pins"
+            )
         }
     }
 
