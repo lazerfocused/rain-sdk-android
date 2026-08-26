@@ -23,9 +23,10 @@ privy = "0.13.1"
 # protobuf-javalite < 3.25.5 = GHSA-735f-pc8j-v9w8 (DoS).
 # bcprov-jdk15to18 is the single BC artifact on the classpath (bcprov-jdk18on is excluded
 # project-wide); floor it explicitly rather than relying on bitcoinj to drag it past 1.82.
+# < 1.84 = GHSA-574f-3g2m-x479 (GOST 28147 CTR keystream reuse, critical).
 bitcoinj = "0.17.1"
 protobuf-javalite = "3.25.5"
-bouncycastle = "1.83"
+bouncycastle = "1.84"
 web3j = "4.10.0"
 timber = "5.0.1"
 okhttp = "5.1.0"

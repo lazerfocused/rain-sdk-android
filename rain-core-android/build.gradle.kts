@@ -59,8 +59,9 @@ dependencies {
     // the bumped versions; they only raise versions, never downgrade.
     //   bitcoinj < 0.17.1 -> GHSA-hfcf-v2f8-x9pc (P2PKH/P2WPKH verify bypass)
     //   protobuf-javalite < 3.25.5 -> GHSA-735f-pc8j-v9w8 (DoS)
-    //   bcprov-jdk15to18 >= 1.83 -> the one BC artifact kept on the classpath (jdk18on is
-    //     excluded above); floored on purpose, not via whichever transitive happens to win.
+    //   bcprov-jdk15to18 < 1.84 -> GHSA-574f-3g2m-x479 (GOST 28147 CTR keystream reuse).
+    //     The one BC artifact kept on the classpath (jdk18on is excluded above); floored on
+    //     purpose, not via whichever transitive happens to win.
     constraints {
         api(libs.bitcoinj.core) {
             because("CVE GHSA-hfcf-v2f8-x9pc: P2PKH/P2WPKH verification bypass in bitcoinj < 0.17.1")
@@ -70,8 +71,10 @@ dependencies {
         }
         api(libs.bouncycastle.bcprov) {
             because(
-                "Bouncy Castle security floor: bcprov-jdk15to18 replaces web3j's CVE-affected " +
-                    "bcprov-jdk18on:1.73 and must stay >= 1.83 regardless of Turnkey/bitcoinj pins"
+                "GHSA-574f-3g2m-x479: GOST 28147 CTR keystream reuse in bcprov < 1.84. " +
+                    "bcprov-jdk15to18 is the single BC artifact on the classpath (it replaces " +
+                    "web3j's bcprov-jdk18on:1.73); floored here so the fix does not depend on " +
+                    "whichever Turnkey/bitcoinj transitive wins resolution"
             )
         }
     }
