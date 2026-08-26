@@ -2,13 +2,15 @@ package com.rain.sdk.portal
 
 import com.google.common.truth.Truth.assertThat
 import com.rain.sdk.internal.error.RainError
+import com.rain.sdk.internal.tokenstore.TokenMetadataStore
 import com.rain.sdk.models.Balance
 import com.rain.sdk.models.RainTransaction
 import com.rain.sdk.models.RainTransactionOrder
+import com.rain.sdk.models.NativeCurrency
 import com.rain.sdk.models.Token
-import com.rain.sdk.utils.EthereumConverter
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -27,14 +29,17 @@ import kotlin.math.pow
 class PortalWalletProviderTest {
 
     private lateinit var portalManager: PortalManager
+    private lateinit var tokenStore: TokenMetadataStore
     private lateinit var portalWalletProvider: PortalWalletProvider
 
     @Before
     fun setUp() {
         portalManager = mockk()
-        // The token store is only consulted inside PortalManager (mocked here), so a relaxed
-        // mock suffices — the provider just forwards it through.
-        portalWalletProvider = PortalWalletProvider(portalManager, mockk(relaxed = true))
+        // sendNativeToken scales by the registry's native decimals; balance/history reads go
+        // through PortalManager (mocked here), which receives the store as a pass-through.
+        tokenStore = mockk(relaxed = true)
+        every { tokenStore.nativeCurrency(any()) } returns NativeCurrency("AVAX", "Avalanche", 18)
+        portalWalletProvider = PortalWalletProvider(portalManager, tokenStore)
     }
 
     @Test
@@ -44,7 +49,8 @@ class PortalWalletProviderTest {
         val fromAddress = "0x1234567890123456789012345678901234567890"
         val toAddress = "0x0987654321098765432109876543210987654321"
         val amountInEth = BigDecimal("1.5")
-        val expectedValueWeiHex = EthereumConverter.convertEthToWeiHex(amountInEth)
+        // 1.5 AVAX = 1.5e18 wei
+        val expectedValueWeiHex = "0x14d1120d7b160000"
         val expectedTxHash = "0xHash"
 
         coEvery { portalManager.getAddress() } returns fromAddress
@@ -72,6 +78,20 @@ class PortalWalletProviderTest {
                 value = expectedValueWeiHex
             )
         }
+    }
+
+
+    @Test
+    fun `sendNativeToken scales the value by the registry's native decimals, not a fixed 18`() = runBlocking {
+        val chainId = 43114
+        every { tokenStore.nativeCurrency(chainId) } returns NativeCurrency("AVAX", "Avalanche", 9)
+        coEvery { portalManager.getAddress() } returns "0x1234567890123456789012345678901234567890"
+        coEvery { portalManager.sendTransaction(any(), any(), any(), any(), any()) } returns "0xHash"
+
+        portalWalletProvider.sendNativeToken(chainId, "0x0987654321098765432109876543210987654321", BigDecimal.ONE)
+
+        // 1 unit of a 9-decimal native currency = 1e9 base units = 0x3b9aca00
+        coVerify { portalManager.sendTransaction(chainId, any(), any(), "0x", "0x3b9aca00") }
     }
 
     @Test

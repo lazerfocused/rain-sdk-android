@@ -51,7 +51,8 @@ internal class PortalWalletProvider(
   ): String {
     requireEvmChain(chainId)
     val fromAddress = getWalletAddress()
-    val valueWeiHex = EthereumConverter.convertEthToWeiHex(amountInEth)
+    val decimals = tokenStore.nativeCurrency(chainId).decimals
+    val valueWeiHex = EthereumConverter.convertEthToWeiHex(amountInEth, decimals)
 
     // For native transfers, data is "0x"
     return sessions.executeWrite {

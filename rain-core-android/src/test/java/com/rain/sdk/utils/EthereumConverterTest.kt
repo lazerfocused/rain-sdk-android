@@ -28,19 +28,30 @@ class EthereumConverterTest {
 
     @Test
     fun `convertEthToWeiHex scales exactly and hex-encodes`() {
-        assertThat(EthereumConverter.convertEthToWeiHex(BigDecimal.ONE))
+        assertThat(EthereumConverter.convertEthToWeiHex(BigDecimal.ONE, 18))
             .isEqualTo("0xde0b6b3a7640000")
         // 1 wei, the finest amount the chain can represent.
-        assertThat(EthereumConverter.convertEthToWeiHex(BigDecimal("0.000000000000000001")))
+        assertThat(EthereumConverter.convertEthToWeiHex(BigDecimal("0.000000000000000001"), 18))
             .isEqualTo("0x1")
-        assertThat(EthereumConverter.convertEthToWeiHex(BigDecimal.ZERO)).isEqualTo("0x0")
+        assertThat(EthereumConverter.convertEthToWeiHex(BigDecimal.ZERO, 18)).isEqualTo("0x0")
+    }
+
+    @Test
+    fun `convertEthToWeiHex scales by the supplied decimals rather than a fixed 18`() {
+        // A 9-decimal native currency: 1.5 units = 1_500_000_000 base units.
+        assertThat(EthereumConverter.convertEthToWeiHex(BigDecimal("1.5"), 9))
+            .isEqualTo("0x${BigInteger("1500000000").toString(16)}")
+        // Precision that is fine at 18 decimals is over-precise at 9.
+        assertThrows(RainError.InvalidAmount::class.java) {
+            EthereumConverter.convertEthToWeiHex(BigDecimal("0.0000000001"), 9)
+        }
     }
 
     @Test
     fun `convertEthToWeiHex rejects a negative amount instead of emitting malformed hex`() {
         // "-1" would otherwise render as "0x-de0b6b3a7640000" and ship into eth_estimateGas.
         val ex = assertThrows(RainError.InvalidAmount::class.java) {
-            EthereumConverter.convertEthToWeiHex(BigDecimal("-1"))
+            EthereumConverter.convertEthToWeiHex(BigDecimal("-1"), 18)
         }
         assertThat(ex.amount).isEqualTo("-1")
     }
@@ -48,7 +59,7 @@ class EthereumConverterTest {
     @Test
     fun `convertEthToWeiHex rejects sub-wei precision instead of truncating`() {
         assertThrows(RainError.InvalidAmount::class.java) {
-            EthereumConverter.convertEthToWeiHex(BigDecimal("0.0000000000000000015"))
+            EthereumConverter.convertEthToWeiHex(BigDecimal("0.0000000000000000015"), 18)
         }
     }
 

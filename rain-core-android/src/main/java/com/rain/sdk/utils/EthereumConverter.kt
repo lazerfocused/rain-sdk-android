@@ -64,17 +64,20 @@ object EthereumConverter {
         wei.toBigDecimal().movePointLeft(18)
 
     /**
-     * Converts an ETH BigDecimal value to a Wei hex string (exact base-10 scaling).
+     * Converts a native-currency amount to a base-unit (wei) hex string (exact base-10 scaling).
+     *
+     * [decimals] comes from the chain's registry entry (`tokenStore.nativeCurrency(chainId)`),
+     * never a hardcoded 18, so a non-18-decimal native currency scales correctly.
      *
      * This value ships straight into `eth_estimateGas` and the provider send body, so it takes
      * the same guards as every other money path: a negative amount would produce malformed hex
-     * ("0x-..."), and sub-wei precision would be truncated silently.
+     * ("0x-..."), and sub-base-unit precision would be truncated silently.
      *
-     * @throws RainError.InvalidAmount if [ethBalance] is negative or carries more than 18
-     *         decimal places
+     * @throws RainError.InvalidAmount if [ethBalance] is negative or carries more than
+     *         [decimals] decimal places
      */
-    fun convertEthToWeiHex(ethBalance: BigDecimal): String {
-        val wei = RainAmountUtils.toBaseUnits(ethBalance, 18)
+    fun convertEthToWeiHex(ethBalance: BigDecimal, decimals: Int): String {
+        val wei = RainAmountUtils.toBaseUnits(ethBalance, decimals)
         return "0x${wei.toString(16)}"
     }
 

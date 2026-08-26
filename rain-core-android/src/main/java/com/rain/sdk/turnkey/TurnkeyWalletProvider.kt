@@ -253,7 +253,8 @@ internal class TurnkeyWalletProvider(
             return sendSolanaNative(chainId, toAddress, amountInEth)
         }
         val from = getWalletAddress(chainId)
-        val valueHex = EthereumConverter.convertEthToWeiHex(amountInEth)
+        val decimals = tokenStore.nativeCurrency(chainId).decimals
+        val valueHex = EthereumConverter.convertEthToWeiHex(amountInEth, decimals)
         return sendTransaction(
             chainId = chainId,
             from = from,
