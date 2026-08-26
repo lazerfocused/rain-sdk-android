@@ -48,6 +48,20 @@ class PrivyWalletProviderTest {
     }
 
     @Test
+    fun `sendNativeToken scales the value by the registry's native decimals, not a fixed 18`() = runBlocking {
+        val manager = mockk<PrivyManager>()
+        coEvery { manager.getAddress(null) } returns WALLET
+        val txJson = slot<String>()
+        coEvery { manager.sendTransaction(WALLET, RPC, capture(txJson)) } returns "0xHASH"
+
+        val wallet = provider(manager, nativeDecimals = 9)
+        wallet.sendNativeToken(chainId = 1, toAddress = TO, amountInEth = BigDecimal.ONE)
+
+        // 1 unit of a 9-decimal native currency = 1e9 base units = 0x3b9aca00
+        assertThat(JSONObject(txJson.captured).getString("value")).isEqualTo("0x3b9aca00")
+    }
+
+    @Test
     fun `sendToken encodes an ERC-20 transfer to the contract with zero value`() = runBlocking {
         val manager = mockk<PrivyManager>()
         coEvery { manager.getAddress(null) } returns WALLET
@@ -459,8 +473,15 @@ class PrivyWalletProviderTest {
         displayValues = emptyMap(),
     )
 
-    private fun provider(manager: PrivyManager, rpc: PrivyRpcClient = simulationPassingRpc()) =
-        PrivyWalletProvider(manager, mapOf(1 to RPC), mockk<TokenMetadataStore>(), rpcClient = rpc)
+    private fun provider(
+        manager: PrivyManager,
+        rpc: PrivyRpcClient = simulationPassingRpc(),
+        nativeDecimals: Int = 18,
+    ): PrivyWalletProvider {
+        val tokenStore = mockk<TokenMetadataStore>()
+        every { tokenStore.nativeCurrency(1) } returns NativeCurrency("ETH", "Ether", nativeDecimals)
+        return PrivyWalletProvider(manager, mapOf(1 to RPC), tokenStore, rpcClient = rpc)
+    }
 
     /** A provider for history tests: token store seeded with [tokens], RPC never touched. */
     private fun historyProvider(manager: PrivyManager, tokens: List<TokenInfo> = emptyList()): PrivyWalletProvider {

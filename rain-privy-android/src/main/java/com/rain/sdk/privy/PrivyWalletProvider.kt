@@ -136,7 +136,8 @@ internal class PrivyWalletProvider(
             )
         }
         val from = getWalletAddress()
-        val valueHex = EthereumConverter.convertEthToWeiHex(amountInEth)
+        val decimals = tokenStore.nativeCurrency(chainId).decimals
+        val valueHex = EthereumConverter.convertEthToWeiHex(amountInEth, decimals)
         return sendTransaction(chainId = chainId, from = from, to = toAddress, data = "0x", value = valueHex)
     }
 
