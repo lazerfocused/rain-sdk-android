@@ -387,6 +387,7 @@ class TurnkeySolanaProviderTest {
             JSONArray().put(JSONObject().put("signature", priorSignature).put("slot", 140)),
             JSONArray().put(JSONObject().put("signature", signature).put("slot", 150))
         )
+        stubTransaction(signature, feePayer = MockTurnkey.DEFAULT_SOLANA_ADDRESS)
 
         // Included with no hash in the status -> we recover the signature from chain (RPC).
         val client = MockTurnkeyClient().apply {
@@ -399,6 +400,10 @@ class TurnkeySolanaProviderTest {
         val result = provider.sendNativeToken(devnet, MockTurnkey.DEFAULT_SOLANA_RECIPIENT, BigDecimal("0.5"))
 
         assertThat(result).isEqualTo(signature)
+        // Recovery scans only what landed after the baseline, then verifies the candidate.
+        val recoveryBody = rpc.recordedBodies.last { it.contains("getSignaturesForAddress") }
+        assertThat(recoveryBody).contains("\"until\":\"$priorSignature\"")
+        assertThat(rpc.recordedMethods).contains("getTransaction")
         assertThat(client.ethSendTransactionCalls).isEmpty()
         assertThat(client.solSendTransactionCalls).hasSize(1)
         val body = client.solSendTransactionCalls.single()
@@ -410,30 +415,112 @@ class TurnkeySolanaProviderTest {
     }
 
     @Test
-    fun `sendNativeToken on solana does not report an older signature when no new one appears`() = runBlocking {
+    fun `sendNativeToken on solana reports pending when no newer signature appears`() {
         val staleSignature = "5oldSigFromAnEarlierTransfer11111111111111111111111111111111"
-        rpc.stubObject(
-            "getLatestBlockhash",
-            JSONObject()
-                .put("context", JSONObject().put("slot", 1))
-                .put("value", JSONObject().put("blockhash", MockTurnkey.DEFAULT_SOLANA_ADDRESS).put("lastValidBlockHeight", 150))
-        )
+        stubBlockhash()
         // The wallet's newest signature never changes across the send: whatever was broadcast
-        // never landed, so the pre-send signature must not be reported as this transfer's.
+        // has not landed, so neither the pre-send signature nor the status id may be reported
+        // as this transfer's hash.
         rpc.stubObject(
             "getSignaturesForAddress",
             JSONArray().put(JSONObject().put("signature", staleSignature).put("slot", 140))
         )
-        val client = MockTurnkeyClient().apply {
-            sendTransactionStatusQueue = mutableListOf(
-                MockTurnkeyClient.StatusFixture(txHash = null, txStatus = "TX_STATUS_INCLUDED")
-            )
+        val provider = makeProvider(client = includedWithoutSignatureClient())
+
+        val ex = assertThrows(RainError.TransactionPending::class.java) {
+            runBlocking { provider.sendNativeToken(devnet, MockTurnkey.DEFAULT_SOLANA_RECIPIENT, BigDecimal("0.5")) }
         }
-        val provider = makeProvider(client = client)
+
+        assertThat(ex.statusId).isEqualTo("sol-send-status-id")
+        assertThat(rpc.recordedMethods).doesNotContain("getTransaction")
+    }
+
+    @Test
+    fun `sendNativeToken on solana skips a newer deposit from someone else and finds its own send`() = runBlocking {
+        val priorSignature = "5oldSigFromAnEarlierTransfer11111111111111111111111111111111"
+        val ownSignature = "2id3YC2jK9G5Wo2phDx4gJVAew8DcY5NAB7jTLd5p3KqJ7xQy9bniaP4q1hk2N1nF"
+        val depositSignature = "3depositFromSomeoneElse1111111111111111111111111111111111111"
+        stubBlockhash()
+        // After the send, a third party's deposit is the wallet's newest signature; the send
+        // itself is the one behind it. Newest-first, like the RPC.
+        rpc.stubObjectSequence(
+            "getSignaturesForAddress",
+            JSONArray().put(JSONObject().put("signature", priorSignature).put("slot", 140)),
+            JSONArray()
+                .put(JSONObject().put("signature", depositSignature).put("slot", 151))
+                .put(JSONObject().put("signature", ownSignature).put("slot", 150))
+        )
+        stubTransaction(depositSignature, feePayer = MockTurnkey.DEFAULT_SOLANA_RECIPIENT)
+        stubTransaction(ownSignature, feePayer = MockTurnkey.DEFAULT_SOLANA_ADDRESS)
+        val provider = makeProvider(client = includedWithoutSignatureClient())
 
         val result = provider.sendNativeToken(devnet, MockTurnkey.DEFAULT_SOLANA_RECIPIENT, BigDecimal("0.5"))
 
-        assertThat(result).isEqualTo("sol-send-status-id")
+        assertThat(result).isEqualTo(ownSignature)
+    }
+
+    @Test
+    fun `sendNativeToken on solana does not report a deposit from someone else as its own send`() {
+        val priorSignature = "5oldSigFromAnEarlierTransfer11111111111111111111111111111111"
+        val depositSignature = "3depositFromSomeoneElse1111111111111111111111111111111111111"
+        stubBlockhash()
+        rpc.stubObjectSequence(
+            "getSignaturesForAddress",
+            JSONArray().put(JSONObject().put("signature", priorSignature).put("slot", 140)),
+            JSONArray().put(JSONObject().put("signature", depositSignature).put("slot", 151))
+        )
+        // Newer than the baseline, but fee-paid by another wallet: not this send.
+        stubTransaction(depositSignature, feePayer = MockTurnkey.DEFAULT_SOLANA_RECIPIENT)
+        val provider = makeProvider(client = includedWithoutSignatureClient())
+
+        val ex = assertThrows(RainError.TransactionPending::class.java) {
+            runBlocking { provider.sendNativeToken(devnet, MockTurnkey.DEFAULT_SOLANA_RECIPIENT, BigDecimal("0.5")) }
+        }
+
+        assertThat(ex.statusId).isEqualTo("sol-send-status-id")
+    }
+
+    @Test
+    fun `sendNativeToken on solana does not report its own failed transaction as success`() {
+        val priorSignature = "5oldSigFromAnEarlierTransfer11111111111111111111111111111111"
+        val failedSignature = "2id3YC2jK9G5Wo2phDx4gJVAew8DcY5NAB7jTLd5p3KqJ7xQy9bniaP4q1hk2N1nF"
+        stubBlockhash()
+        rpc.stubObjectSequence(
+            "getSignaturesForAddress",
+            JSONArray().put(JSONObject().put("signature", priorSignature).put("slot", 140)),
+            JSONArray().put(JSONObject().put("signature", failedSignature).put("slot", 150))
+        )
+        stubTransaction(
+            failedSignature,
+            feePayer = MockTurnkey.DEFAULT_SOLANA_ADDRESS,
+            err = JSONObject().put("InstructionError", JSONArray().put(0).put("InsufficientFunds"))
+        )
+        val provider = makeProvider(client = includedWithoutSignatureClient())
+
+        val ex = assertThrows(RainError.TransactionPending::class.java) {
+            runBlocking { provider.sendNativeToken(devnet, MockTurnkey.DEFAULT_SOLANA_RECIPIENT, BigDecimal("0.5")) }
+        }
+
+        assertThat(ex.statusId).isEqualTo("sol-send-status-id")
+    }
+
+    @Test
+    fun `sendNativeToken on solana skips chain recovery when the baseline read fails`() {
+        stubBlockhash()
+        // Without a pre-send baseline, nothing distinguishes this send from older history or a
+        // stranger's deposit, so the SDK must not guess: pending, with the status id to resume.
+        rpc.stubNetworkFailure("getSignaturesForAddress")
+        val client = includedWithoutSignatureClient()
+        val provider = makeProvider(client = client)
+
+        val ex = assertThrows(RainError.TransactionPending::class.java) {
+            runBlocking { provider.sendNativeToken(devnet, MockTurnkey.DEFAULT_SOLANA_RECIPIENT, BigDecimal("0.5")) }
+        }
+
+        assertThat(ex.statusId).isEqualTo("sol-send-status-id")
+        assertThat(client.solSendTransactionCalls).hasSize(1)
+        assertThat(rpc.recordedMethods.count { it == "getSignaturesForAddress" }).isEqualTo(1)
+        assertThat(rpc.recordedMethods).doesNotContain("getTransaction")
     }
 
     @Test
@@ -451,6 +538,7 @@ class TurnkeySolanaProviderTest {
             JSONArray(),
             JSONArray().put(JSONObject().put("signature", signature).put("slot", 150))
         )
+        stubTransaction(signature, feePayer = MockTurnkey.DEFAULT_SOLANA_ADDRESS)
         val client = MockTurnkeyClient().apply {
             sendTransactionStatusQueue = mutableListOf(
                 MockTurnkeyClient.StatusFixture(txHash = null, txStatus = "TX_STATUS_INCLUDED")
@@ -1039,6 +1127,45 @@ class TurnkeySolanaProviderTest {
             JSONArray().put(JSONObject().put("signature", SIGNATURE).put("slot", 150))
         )
         return true
+    }
+
+    private fun stubBlockhash() {
+        rpc.stubObject(
+            "getLatestBlockhash",
+            JSONObject()
+                .put("context", JSONObject().put("slot", 1))
+                .put("value", JSONObject().put("blockhash", MockTurnkey.DEFAULT_SOLANA_ADDRESS).put("lastValidBlockHeight", 150))
+        )
+    }
+
+    /** A `getTransaction` result for [signature]: `json` encoding, [feePayer] first, [err] in meta. */
+    private fun stubTransaction(signature: String, feePayer: String, err: JSONObject? = null) {
+        rpc.stubObjectFor(
+            "getTransaction",
+            signature,
+            JSONObject()
+                .put("slot", 150)
+                .put(
+                    "transaction",
+                    JSONObject()
+                        .put("signatures", JSONArray().put(signature))
+                        .put(
+                            "message",
+                            JSONObject().put(
+                                "accountKeys",
+                                JSONArray().put(feePayer).put(MockTurnkey.DEFAULT_SOLANA_RECIPIENT).put(SolanaPrograms.SYSTEM_ADDRESS)
+                            )
+                        )
+                )
+                .put("meta", JSONObject().put("err", err ?: JSONObject.NULL))
+        )
+    }
+
+    /** Included on Turnkey's side but with no signature in the status: forces chain recovery. */
+    private fun includedWithoutSignatureClient() = MockTurnkeyClient().apply {
+        sendTransactionStatusQueue = mutableListOf(
+            MockTurnkeyClient.StatusFixture(txHash = null, txStatus = "TX_STATUS_INCLUDED")
+        )
     }
 
     private fun includedStatusClient() = MockTurnkeyClient().apply {

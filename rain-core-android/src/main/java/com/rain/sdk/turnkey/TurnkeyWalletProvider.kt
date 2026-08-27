@@ -1227,8 +1227,9 @@ internal class TurnkeyWalletProvider(
 
     /**
      * Signs and broadcasts a composed transfer through Turnkey, then resolves the signature:
-     * from the send-status response (Turnkey SDK 2.0 populates it once Included), with a chain
-     * lookup as defensive fallback, and the status id as the last resort.
+     * from the send-status response (Turnkey SDK 2.0 populates it once Included), else recovered
+     * from chain and verified as this wallet's own successful transaction. Anything short of that
+     * is [RainError.TransactionPending] — never the status id posing as a signature.
      */
     private suspend fun submitSolanaTransaction(
         chainId: Int,
@@ -1239,7 +1240,8 @@ internal class TurnkeyWalletProvider(
             ?: throw RainError.InvalidConfig("No RPC endpoint configured for chainId=$chainId")
 
         // Baseline for the signature recovery below: the wallet's newest signature before this send.
-        val priorSignature = runCatching { solanaRpcClient.getLatestSignature(rpcUrl, from) }.getOrNull()
+        // Kept as a Result: without a baseline, recovery cannot tell this send from older history.
+        val baseline = runCatching { solanaRpcClient.getLatestSignature(rpcUrl, from) }
 
         val statusId = sessions.executeWrite { session, client ->
             client.solSendTransaction(
@@ -1255,15 +1257,37 @@ internal class TurnkeyWalletProvider(
         }
         pollForSolanaCompletion(statusId)?.let { return it }
 
-        // getSignaturesForAddress lags broadcast slightly, so retry briefly before falling back
-        // to the status id. Only a signature that differs from the pre-send baseline can belong
-        // to this send; returning the baseline would report an older transaction as this one.
+        // No baseline: any signature found now could be older history or someone else's
+        // deposit, so skip recovery. The send was accepted; the host resumes from the status id.
+        val priorSignature = baseline.getOrElse { throw RainError.TransactionPending(statusId) }
+
+        // getSignaturesForAddress lags broadcast slightly, so retry briefly. Only a signature
+        // newer than the baseline can belong to this send, and it still has to be verified as
+        // this wallet's own successful transaction: a deposit from elsewhere also lands here.
         for (attempt in 0 until SOLANA_SIGNATURE_LOOKUP_ATTEMPTS) {
-            val signature = solanaRpcClient.getLatestSignature(rpcUrl, from)
-            if (signature != null && signature != priorSignature) return signature
+            findOwnConfirmedSignature(rpcUrl, from, priorSignature)?.let { return it }
             if (attempt + 1 < SOLANA_SIGNATURE_LOOKUP_ATTEMPTS) delay(pollingIntervalMs)
         }
-        return statusId
+        // Same contract as the EVM path: a timeout is pending, not success and not failure.
+        throw RainError.TransactionPending(statusId)
+    }
+
+    /**
+     * Newest post-baseline signature that is a confirmed transaction fee-paid by [from] with no
+     * on-chain error, or null when none of them is.
+     */
+    private suspend fun findOwnConfirmedSignature(
+        rpcUrl: String,
+        from: String,
+        priorSignature: String?
+    ): String? {
+        val candidates = solanaRpcClient.getSignaturesSince(rpcUrl, from, until = priorSignature)
+        for (signature in candidates) {
+            if (signature == priorSignature) continue
+            val record = solanaRpcClient.getTransaction(rpcUrl, signature) ?: continue
+            if (record.feePayer == from && record.succeeded) return signature
+        }
+        return null
     }
 
     /** Rejects a Solana chain id on the EVM-only entry points, which have no Solana equivalent. */

@@ -8,7 +8,8 @@ import org.junit.Test
 
 /**
  * Vendor-error classification. The Privy Kotlin SDK carries no structured reason codes, so
- * classification is by exception type + message keywords.
+ * classification is by exception type + message, with rejection and funds-shortfall prose held
+ * to core's two-word standard: a lone "denied" or "cancelled" does not classify.
  */
 class PrivyErrorMappingTest {
 
@@ -56,9 +57,25 @@ class PrivyErrorMappingTest {
 
     @Test
     fun `user rejection during a wallet request maps to UserRejected`() {
-        for (message in listOf("User rejected the request", "Request denied", "Signing cancelled")) {
+        for (message in listOf(
+            "User rejected the request",
+            "Request denied by user",
+            "Signing cancelled by the user",
+            "MetaMask Tx Signature: User denied transaction signature.",
+            "RPC Error: code 4001"
+        )) {
             val mapped = PrivyErrorMapping.mapOrNull(EmbeddedWalletException(message))
             assertThat(mapped).isInstanceOf(RainError.UserRejected::class.java)
+        }
+    }
+
+    @Test
+    fun `a single rejection word during a wallet request is not a UserRejected`() {
+        // Same standard as core: "Transaction cancelled" is a chain outcome, not the user
+        // declining a prompt.
+        for (message in listOf("Request denied", "Signing cancelled", "Rejected: nonce too low")) {
+            val mapped = PrivyErrorMapping.mapOrNull(EmbeddedWalletException(message))
+            assertThat(mapped).isInstanceOf(RainError.ProviderError::class.java)
         }
     }
 

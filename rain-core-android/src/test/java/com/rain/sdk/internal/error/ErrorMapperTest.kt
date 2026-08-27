@@ -5,10 +5,11 @@ import com.rain.sdk.internal.helpers.assumeJdk24
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
+import java.util.concurrent.CancellationException
 
 /**
  * Unit tests for [ErrorMapper] — covers the non-Turnkey classification paths (signing
- * vs transaction, keyword-based user-reject / insufficient-funds detection, Portal-style
+ * vs transaction, prose-based user-reject / insufficient-funds detection, Portal-style
  * provider mapping).
  *
  * Gated on JDK 24+: `ErrorMapper` references `com.turnkey...TurnkeyKotlinError` in its
@@ -25,37 +26,69 @@ class ErrorMapperTest {
 
     // ---- mapSigningError -----------------------------------------------------------
 
+    // The standard: a message classifies only on a phrase of at least two words, or on the
+    // EIP-1193 code 4001. A lone "rejected" / "cancelled" / "insufficient" is not enough.
+
     @Test
-    fun `mapSigningError returns UserRejected when message contains reject`() {
-        val mapped = mapper.mapSigningError(RuntimeException("User rejected the request"))
-        assertThat(mapped).isInstanceOf(RainError.UserRejected::class.java)
+    fun `mapSigningError returns UserRejected for a two-word rejection phrase`() {
+        for (message in listOf(
+            "User rejected the request",
+            "User denied transaction signature",
+            "User cancelled signing",
+            "User canceled signing",
+            "User declined the request",
+            "Signature rejected by user",
+            "Request denied by user",
+            "Transaction cancelled by user",
+            "Request denied by the user"
+        )) {
+            val mapped = mapper.mapSigningError(RuntimeException(message))
+            assertThat(mapped).isInstanceOf(RainError.UserRejected::class.java)
+        }
     }
 
     @Test
-    fun `mapSigningError returns UserRejected when message contains denied`() {
-        val mapped = mapper.mapSigningError(RuntimeException("request denied"))
-        assertThat(mapped).isInstanceOf(RainError.UserRejected::class.java)
+    fun `mapSigningError returns UserRejected for the EIP-1193 code 4001`() {
+        for (message in listOf("code: 4001, message: nope", "RPC error [4001]", "Provider error (4001)")) {
+            val mapped = mapper.mapSigningError(RuntimeException(message))
+            assertThat(mapped).isInstanceOf(RainError.UserRejected::class.java)
+        }
     }
 
     @Test
-    fun `mapSigningError returns UserRejected when message contains cancel`() {
-        val mapped = mapper.mapSigningError(RuntimeException("Operation cancelled"))
-        assertThat(mapped).isInstanceOf(RainError.UserRejected::class.java)
+    fun `mapSigningError does not classify on a single word`() {
+        for (message in listOf(
+            "User doesn't have an embedded wallet",
+            "Transaction cancelled",
+            "request was denied",
+            "Rejected: nonce too low",
+            "insufficient permissions for this operation",
+            "nonce 4001 too low"
+        )) {
+            val mapped = mapper.mapSigningError(RuntimeException(message))
+            assertThat(mapped).isNotInstanceOf(RainError.UserRejected::class.java)
+            assertThat(mapped).isInstanceOf(RainError.ProviderError::class.java)
+        }
     }
 
     @Test
-    fun `mapSigningError does not treat a bare user mention as rejection`() {
-        // "user" alone is not a rejection keyword — this message is a wallet-availability
-        // failure, not the user declining anything.
-        val mapped = mapper.mapSigningError(RuntimeException("User doesn't have an embedded wallet"))
-        assertThat(mapped).isNotInstanceOf(RainError.UserRejected::class.java)
-        assertThat(mapped).isInstanceOf(RainError.ProviderError::class.java)
+    fun `mapSigningError classifies a vendor exception whose type name says the user rejected`() {
+        // Vendors often spell the reason only in the class and leave the message generic.
+        assertThat(mapper.mapSigningError(UserRejectedRequestException()))
+            .isInstanceOf(RainError.UserRejected::class.java)
     }
 
     @Test
-    fun `mapSigningError returns InsufficientFunds when message contains insufficient`() {
-        val mapped = mapper.mapSigningError(RuntimeException("insufficient funds for transfer"))
-        assertThat(mapped).isInstanceOf(RainError.InsufficientFunds::class.java)
+    fun `mapSigningError returns InsufficientFunds for a two-word funds phrase`() {
+        for (message in listOf(
+            "insufficient funds for gas * price + value",
+            "Insufficient balance for transfer",
+            "Transfer: insufficient lamports 100, need 5000",
+            "Attempt to debit an account but found no record of a prior credit."
+        )) {
+            val mapped = mapper.mapSigningError(RuntimeException(message))
+            assertThat(mapped).isInstanceOf(RainError.InsufficientFunds::class.java)
+        }
     }
 
     @Test
@@ -83,15 +116,21 @@ class ErrorMapperTest {
     // ---- mapTransactionError -------------------------------------------------------
 
     @Test
-    fun `mapTransactionError returns InsufficientFunds when message contains insufficient`() {
+    fun `mapTransactionError returns InsufficientFunds when message says insufficient funds`() {
         val mapped = mapper.mapTransactionError(RuntimeException("Insufficient funds for gas"))
         assertThat(mapped).isInstanceOf(RainError.InsufficientFunds::class.java)
     }
 
     @Test
-    fun `mapTransactionError matches insufficient case-insensitively`() {
-        val mapped = mapper.mapTransactionError(RuntimeException("INSUFFICIENT balance"))
+    fun `mapTransactionError matches the funds phrase case-insensitively`() {
+        val mapped = mapper.mapTransactionError(RuntimeException("INSUFFICIENT BALANCE for transfer"))
         assertThat(mapped).isInstanceOf(RainError.InsufficientFunds::class.java)
+    }
+
+    @Test
+    fun `mapTransactionError does not treat coroutine cancellation as a rejection`() {
+        val mapped = mapper.mapTransactionError(CancellationException("User cancelled the job"))
+        assertThat(mapped).isInstanceOf(RainError.ProviderError::class.java)
     }
 
     @Test
@@ -168,7 +207,7 @@ class ErrorMapperTest {
     }
 
     @Test
-    fun `an unclassified HTTP status still falls through to the keyword checks`() {
+    fun `an unclassified HTTP status still falls through to the prose checks`() {
         val e = RuntimeException(
             "HTTP error calling ACTIVITY_TYPE_ETH_SEND_TRANSACTION request\n" +
                 "Error: user rejected the signing request\nCode: 400"
@@ -187,4 +226,7 @@ class ErrorMapperTest {
         val e = RuntimeException("Something failed for wallet 401")
         assertThat(mapper.mapTransactionError(e)).isInstanceOf(RainError.ProviderError::class.java)
     }
+
+    /** A vendor exception that names the reason only in its type, as some SDKs do. */
+    private class UserRejectedRequestException : RuntimeException("request failed")
 }

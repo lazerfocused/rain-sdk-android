@@ -57,6 +57,22 @@ class ErrorMapperTurnkeyTest {
     }
 
     @Test
+    fun `mapTurnkeyError FailedToSignRawPayload with an insufficient-funds cause maps to InsufficientFunds`() {
+        val cause = RuntimeException("insufficient funds for gas * price + value")
+        val error = com.turnkey.core.models.errors.TurnkeyKotlinError.FailedToSignRawPayload(cause)
+        val mapped = mapper.mapTurnkeyError(error)
+        assertThat(mapped).isInstanceOf(RainError.InsufficientFunds::class.java)
+    }
+
+    @Test
+    fun `mapTurnkeyError FailedToSignRawPayload with a single-word cause stays ProviderError`() {
+        val cause = RuntimeException("Transaction cancelled")
+        val error = com.turnkey.core.models.errors.TurnkeyKotlinError.FailedToSignRawPayload(cause)
+        val mapped = mapper.mapTurnkeyError(error)
+        assertThat(mapped).isInstanceOf(RainError.ProviderError::class.java)
+    }
+
+    @Test
     fun `mapTurnkeyError wrapper with an HTTP 401 cause maps to TokenExpired not UserRejected`() {
         // The wrapped cause carries a status and a rejection keyword; the status wins.
         val cause = RuntimeException(

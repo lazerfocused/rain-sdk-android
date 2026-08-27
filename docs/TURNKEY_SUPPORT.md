@@ -205,8 +205,12 @@ chain ids (`RainChain.SOLANA_MAINNET` 900 / `SOLANA_DEVNET` 901 / `SOLANA_TESTNE
 - **History.** From Turnkey's activity log (`ACTIVITY_TYPE_SOL_SEND_TRANSACTION`) — sends only, and
   the row's hash is the Turnkey status id, not an explorer-resolvable signature.
 - **Encoding.** Turnkey hex-decodes `unsignedTransaction` despite the type documenting base64, so
-  Rain sends hex. Turnkey returns a status id rather than a signature; Rain polls for it and falls
-  back to `getSignaturesForAddress`.
+  Rain sends hex. Turnkey returns a status id rather than a signature; Rain polls for it, then
+  recovers it from `getSignaturesForAddress` (newer than the pre-send baseline only) and verifies
+  via `getTransaction` that the candidate is fee-paid by this wallet with `err == null`. If the
+  baseline read failed or nothing verifiable lands in time, the send surfaces as
+  `TransactionPending` carrying the status id — the same contract as EVM — never the status id
+  posing as a signature.
 - **Collateral withdrawal.** Authorized differently from EVM: the coordinator executor signs a
   keccak-encoded withdraw message off chain (that is the admin signature the Rain API returns). Core
   composes a two-instruction transaction — a native ed25519 proof that the executor signed that exact
