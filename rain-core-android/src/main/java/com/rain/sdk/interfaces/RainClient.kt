@@ -224,7 +224,9 @@ interface RainClient {
      * @param decimals Optional number of decimals the token uses (e.g. 6 for USDC, 18 for most
      *                 tokens). When `null` (the default), the SDK resolves the token's
      *                 `decimals()` itself — from its token registry or, for unknown tokens, an
-     *                 on-chain `decimals()` read — so callers don't have to track it.
+     *                 on-chain `decimals()` read — so callers don't have to track it. If neither
+     *                 can establish it, the send fails with [RainError.TokenNotFound] rather than
+     *                 scaling the amount by a guess.
      *                 On Solana it never scales the amount: the SPL mint's own decimals are read
      *                 from the chain and enforced by `TransferChecked`.
      * @return RainTokenTransferResult containing the transaction hash

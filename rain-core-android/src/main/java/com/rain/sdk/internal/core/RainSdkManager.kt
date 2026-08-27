@@ -290,17 +290,15 @@ internal class RainSdkManager(
     decimals: Int?
   ): RainTokenTransferResult {
     return try {
-      // Resolve decimals when the caller doesn't supply them: the token store checks its
-      // registry first and falls back to an on-chain `decimals()` read for unknown tokens.
+      // Decimals the caller omitted come from the registry or a strict on-chain read; a failed
+      // read throws rather than scaling a real transfer by a guessed 18.
       //
       // Skipped on Solana — the store enriches through the EVM reader, which cannot see an SPL
       // mint — so an unspecified value resolves to 0 there. The Solana adapter reads the mint's
       // own decimals and must not scale with this one.
       val recipient = if (SolanaChains.isSolanaChain(chainId)) to else checksummedRecipient(to)
       val resolvedDecimals = decimals
-        ?: takeUnless { SolanaChains.isSolanaChain(chainId) }
-          ?.let { tokenStore?.tokenInfo(chainId, contractAddress)?.decimals }
-        ?: if (SolanaChains.isSolanaChain(chainId)) 0 else RainClient.DEFAULT_ERC20_DECIMALS
+        ?: if (SolanaChains.isSolanaChain(chainId)) 0 else requireDecimals(chainId, contractAddress)
       val txHash = walletProvider.sendToken(chainId, contractAddress, recipient, amount, resolvedDecimals)
       RainTokenTransferResult(transactionHash = txHash)
     } catch (e: Exception) {
@@ -309,6 +307,23 @@ internal class RainSdkManager(
       Timber.e(e, "Rain SDK: Failed to send ERC-20 token")
       throw errorMapper.mapTransactionError(e)
     }
+  }
+
+  /**
+   * The token's decimals from the registry or a strict on-chain read. Refuses to guess: a
+   * default 18 against a 6-decimal token would move 10^12 times the intended amount.
+   */
+  private suspend fun requireDecimals(chainId: Int, contractAddress: String): Int {
+    val resolved = tokenStore?.decimalsOrNull(chainId, contractAddress)
+      ?: throw RainError.TokenNotFound(contractAddress, chainId)
+
+    // Scaling raises 10 to this power; uint256 max is ~1.16e77, so anything finer is unusable.
+    if (resolved !in 0..77) {
+      throw RainError.InvalidConfig(
+        "Token $contractAddress reports $resolved decimals, outside the supported range 0..77"
+      )
+    }
+    return resolved
   }
 
   /** Validates and EIP-55 checksums an EVM recipient; a malformed address must never broadcast. */

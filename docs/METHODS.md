@@ -371,7 +371,7 @@ Routed by `chainId`.
 | `contractAddress` | `String` | ERC-20 token contract address, or the SPL mint on Solana. |
 | `to` | `String` | Recipient wallet address. |
 | `amount` | `BigDecimal` | Amount in human-readable form (e.g. `BigDecimal("100.0")` for 100 USDC). |
-| `decimals` | `Int?` | Optional token decimals. When `null` (the default), the SDK resolves the token's `decimals()` from its registry or an on-chain read, so callers don't have to track it. |
+| `decimals` | `Int?` | Optional token decimals. When `null` (the default), the SDK resolves the token's `decimals()` from its registry or an on-chain read, so callers don't have to track it. If neither can establish it, the send throws `TokenNotFound` rather than scaling by a guessed value. |
 
 ---
 

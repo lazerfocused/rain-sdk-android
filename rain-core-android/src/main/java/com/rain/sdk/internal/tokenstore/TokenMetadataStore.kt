@@ -102,6 +102,30 @@ class TokenMetadataStore internal constructor(
         }
     }
 
+    /**
+     * A contract token's decimals, or null when unknown to the registry and the on-chain read
+     * failed. Never substitutes the 18-decimal default: money paths must not scale by a guess.
+     */
+    suspend fun decimalsOrNull(chainId: Int, address: String): Int? {
+        val key = address.lowercase()
+
+        mutex.withLock {
+            knownTokens[chainId]?.firstOrNull { it.address.lowercase() == key }
+                ?.let { return it.decimals }
+            enrichmentCache[chainId]?.get(key)?.let { return it.decimals }
+        }
+
+        // Enrich outside the lock so a slow RPC doesn't block lookups for other tokens.
+        val enriched = enrich(chainId, address)
+        if (!enriched.decimalsResolved) return null
+
+        return mutex.withLock {
+            enrichmentCache[chainId]?.get(key)?.let { return@withLock it.decimals }
+            enrichmentCache.getOrPut(chainId) { mutableMapOf() }[key] = enriched.info
+            enriched.info.decimals
+        }
+    }
+
     // ---------- Enrichment ----------
 
     /** An enrichment result plus whether `decimals` came from the chain or the fallback. */
