@@ -201,11 +201,10 @@ internal class PrivyWalletProvider(
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Timber.e(e, "Rain SDK: Transaction simulation failed (eth_call)")
-            // Node errors the RPC client already classified (insufficient funds, simulation
-            // failure) surface as themselves; anything else is a simulation failure.
-            if (e is RainError.InsufficientFunds || e is RainError.TransactionSimulationFailed) {
-                throw e
-            }
+            // Errors the RPC client already classified surface as themselves: a NetworkError
+            // here is retryable, and wrapping it as a simulation failure would tell the host
+            // (via WithdrawalRevertedByNetwork) not to retry. Anything else is a simulation failure.
+            if (e is RainError) throw e
             throw RainError.TransactionSimulationFailed(e)
         }
 
