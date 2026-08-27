@@ -218,6 +218,16 @@ Full withdrawal flow: builds the transaction, signs via the backing provider, su
 returns the transaction hash. Use [prepareWithdrawal](#preparewithdrawalchainid-addresses-amount-decimals-adminsignature-nonce)
 to build without broadcasting.
 
+> **Migrating from 1.0.x — this method always broadcasts now.** In 1.0.x the same name took an
+> `autoSend: Boolean = false` trailing parameter, so a call that left it out only *prepared* the
+> transaction and returned `RainWithdrawResult.transactionData`. That flag and that type are gone:
+> `withdrawCollateral` signs and submits, and the prepare-only path is `prepareWithdrawal`.
+> Old call sites mostly fail to compile — passing `autoSend` is an unknown parameter, reading
+> `.transactionHash` / `.transactionData` off the `String` result is an error, and builds that took
+> `amount: Double` no longer accept a `Double` — but a call that omitted `autoSend` **and discards
+> the result** compiles unchanged and moves funds. Audit every `withdrawCollateral` call when
+> upgrading; the ones meant to prepare must become `prepareWithdrawal`.
+
 On EVM chains this calls `withdrawAsset` on the Rain coordinator contract (EIP-712 admin
 signature + the Rain API signature). On Solana chains it drives Rain's on-chain collateral
 program instead: the SDK reads the collateral account (program id, coordinator, nonce) from the
@@ -511,6 +521,12 @@ old shape. Slated for removal in the next major version.
 | `getERC20Balance(chainId, tokenAddress, decimals?): Double` | `getBalance(chainId, Token.contract(tokenAddress))` | `decimals` argument ignored; SDK resolves decimals itself. |
 | `generateAddressQRCode(address, width, height)` | `generateAddressQRCode(address, dimension)` | A QR code is square; the two dimensions were always equal in practice. |
 | `composeTransactionParameters(walletAddress, contractAddress, transactionData)` | `RainSdk.buildTransactionParameters(...)` | Pure composition needs no resolved client; moved to `RainSdk`. |
+
+### Removed without a shim
+
+| 1.0.x signature | Replacement | Why no shim |
+|-----------------|-------------|-------------|
+| `withdrawCollateral(chainId, addresses, amount, decimals, adminSignature, nonce, autoSend = false): RainWithdrawResult` | `withdrawCollateral(...)` to broadcast, `prepareWithdrawal(...)` to build only | The current method shares the leading parameters, so a shim with a defaulted `autoSend` would never be selected for calls that omit it — Kotlin prefers the overload using fewer defaults — and could not restore the old prepare-only default. See the migration note under [withdrawCollateral](#withdrawcollateralchainid-addresses-amount-decimals-adminsignature-nonce). |
 
 ---
 

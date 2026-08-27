@@ -42,7 +42,8 @@ interface RainClient {
     val capabilities: Set<Capability>
 
     /**
-     * Executes a collateral withdrawal on-chain.
+     * Executes a collateral withdrawal on-chain. Always broadcasts: the 1.0.x `autoSend` flag
+     * (default `false`, prepare-only) is gone — use [prepareWithdrawal] for that.
      *
      * @param chainId The chain ID for the transaction
      * @param addresses All required addresses for the withdrawal
