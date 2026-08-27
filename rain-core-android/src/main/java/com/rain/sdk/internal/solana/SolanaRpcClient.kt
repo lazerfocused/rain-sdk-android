@@ -21,6 +21,11 @@ import java.util.Base64
 internal class SolanaRpcClient(
     private val jsonRpcClient: JsonRpcClient = JsonRpcClient()
 ) {
+    private companion object {
+        /** How many post-send signatures to inspect when recovering a send's own signature. */
+        const val SIGNATURE_SCAN_LIMIT = 10
+    }
+
     /** Native SOL balance in lamports via `getBalance`. */
     suspend fun getBalanceLamports(rpcUrl: String, address: String): BigInteger {
         val response = jsonRpcClient.call(rpcUrl, "getBalance", listOf(address))
@@ -57,6 +62,54 @@ internal class SolanaRpcClient(
         val results = response.optJSONArray("result") ?: return null
         if (results.length() == 0) return null
         return results.getJSONObject(0).optString("signature", "").ifEmpty { null }
+    }
+
+    /**
+     * Signatures involving [address] newer than [until] (all recent ones when null), newest first.
+     * `until` is the RPC's own cursor, so a deposit landing after a send cannot hide the send.
+     */
+    suspend fun getSignaturesSince(rpcUrl: String, address: String, until: String?): List<String> {
+        val options = mutableMapOf<String, Any>("limit" to SIGNATURE_SCAN_LIMIT)
+        if (until != null) options["until"] = until
+        val response = jsonRpcClient.call(rpcUrl, "getSignaturesForAddress", listOf(address, options))
+        val results = response.optJSONArray("result") ?: return emptyList()
+        return (0 until results.length()).mapNotNull { index ->
+            results.optJSONObject(index)?.optString("signature", "")?.ifEmpty { null }
+        }
+    }
+
+    /**
+     * The confirmed transaction for [signature], or null when the cluster does not know it yet.
+     * Read at `confirmed` so a just-landed send is visible.
+     */
+    suspend fun getTransaction(rpcUrl: String, signature: String): SolanaTransactionRecord? {
+        val response = jsonRpcClient.call(
+            rpcUrl,
+            "getTransaction",
+            listOf(
+                signature,
+                mapOf(
+                    "encoding" to "json",
+                    "commitment" to "confirmed",
+                    "maxSupportedTransactionVersion" to 0
+                )
+            )
+        )
+        val result = response.optJSONObject("result") ?: return null
+        val accountKeys = result.optJSONObject("transaction")
+            ?.optJSONObject("message")
+            ?.optJSONArray("accountKeys")
+            ?: throw RainError.InternalError("Unexpected getTransaction response for $signature")
+        // `json` encoding lists keys as strings; `jsonParsed` wraps them in {pubkey, signer, ...}.
+        val feePayer = when (val first = accountKeys.opt(0)) {
+            is String -> first
+            is JSONObject -> first.optString("pubkey", "")
+            else -> ""
+        }
+        val error = result.optJSONObject("meta")?.opt("err")
+            ?.takeIf { it != JSONObject.NULL }
+            ?.toString()
+        return SolanaTransactionRecord(feePayer = feePayer.ifEmpty { null }, error = error)
     }
 
     // ---------- accounts ----------
@@ -271,6 +324,15 @@ internal data class SolanaTokenAccount(
     val amount: BigInteger,
     val decimals: Int
 )
+
+/** The fields of a `getTransaction` result the SDK reads. [error] is null when it succeeded. */
+internal data class SolanaTransactionRecord(
+    /** First account key: the signer that paid the fee. */
+    val feePayer: String?,
+    val error: String?
+) {
+    val succeeded: Boolean get() = error == null
+}
 
 /** Outcome of a `simulateTransaction` dry run. [error] is null when the transaction would succeed. */
 internal data class SolanaSimulation(

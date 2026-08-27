@@ -2,6 +2,7 @@ package com.rain.sdk.internal.error
 
 import com.turnkey.core.models.errors.TurnkeyKotlinError
 import timber.log.Timber
+import java.util.concurrent.CancellationException
 
 /**
  * Centralized error mapping for Rain SDK.
@@ -34,19 +35,15 @@ internal class ErrorMapper {
     }
 
     /**
-     * Typed signals win over keyword heuristics: an HTTP 401 whose body happens to say
+     * Typed signals win over prose heuristics: an HTTP 401 whose body happens to say
      * "session expired, request cancelled" is a session problem, not a user rejection, and
      * hosts branch on TokenExpired/Unauthorized to decide whether to re-authenticate. The
-     * keyword checks are best-effort English vendor prose and run last.
+     * prose check is best-effort English vendor text and runs last.
      */
     private fun classify(e: Exception): RainError {
         if (e is TurnkeyKotlinError) return mapTurnkeyError(e)
         mapTurnkeyHttpStatus(e)?.let { return it }
-        return when {
-            isUserRejection(e) -> RainError.UserRejected()
-            isInsufficientFunds(e) -> RainError.InsufficientFunds()
-            else -> RainError.ProviderError(e)
-        }
+        return classifyVendorProse(e) ?: RainError.ProviderError(e)
     }
 
     /**
@@ -66,7 +63,7 @@ internal class ErrorMapper {
      *  - Config/setup-style errors (missing rpId, missing config param, client not initialized,
      *    invalid parameter / message / refresh TTL / response, OAuth state mismatch, key already
      *    exists / not found) → InternalError
-     *  - Wrapper errors with an underlying cause → recurse / detect user cancellation
+     *  - Wrapper errors with an underlying cause → recurse / classify the cause's vendor prose
      *  - Everything else → ProviderError
      */
     fun mapTurnkeyError(e: TurnkeyKotlinError): RainError {
@@ -91,12 +88,12 @@ internal class ErrorMapper {
         }
 
         // Recurse into wrapped causes (e.g. FailedToSignRawPayload(underlying)). The status
-        // check precedes the rejection keywords here too, for the same reason as classify().
+        // check precedes the prose check here too, for the same reason as classify().
         val cause = e.cause
         if (cause != null && cause !== e) {
             if (cause is TurnkeyKotlinError) return mapTurnkeyError(cause)
             mapTurnkeyHttpStatus(cause)?.let { return it }
-            if (isUserRejection(cause)) return RainError.UserRejected()
+            classifyVendorProse(cause)?.let { return it }
         }
 
         return RainError.ProviderError(e)
@@ -123,25 +120,13 @@ internal class ErrorMapper {
     }
 
     /**
-     * Detects if an error indicates user rejection.
-     * Checks for common rejection keywords (reject / denied / cancel) in error messages.
-     * A bare "user" mention is deliberately not enough:
-     * messages like "User doesn't have an embedded wallet" are not rejections.
+     * Classifies untyped vendor prose by the shared two-word standard in
+     * [VendorErrorClassifier]; null when the text matches neither rejection nor funds shortfall.
      */
-    private fun isUserRejection(e: Throwable): Boolean {
-        return e.message?.let { msg ->
-            msg.contains("reject", ignoreCase = true) ||
-            msg.contains("denied", ignoreCase = true) ||
-            msg.contains("cancel", ignoreCase = true)
-        } ?: false
-    }
-
-    /**
-     * Detects if an error indicates insufficient funds.
-     * Checks for insufficient funds keywords in error messages.
-     */
-    private fun isInsufficientFunds(e: Exception): Boolean {
-        return e.message?.contains("insufficient", ignoreCase = true) ?: false
+    private fun classifyVendorProse(e: Throwable): RainError? {
+        // Coroutine cancellation is not a wallet-UI rejection, and its type name says "cancel".
+        if (e is CancellationException) return null
+        return VendorErrorClassifier.fromVendorError(e)
     }
 
     internal companion object {

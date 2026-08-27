@@ -44,6 +44,7 @@ internal class MockRpcServer {
     /** Per-method result sequences; each dispatch consumes the next result, the last is sticky. */
     private val sequenceStubs = ConcurrentHashMap<String, MutableList<Any>>()
     private val recorded = mutableListOf<String>()
+    private val recordedBodyList = mutableListOf<String>()
 
     fun start() {
         server.start()
@@ -52,7 +53,10 @@ internal class MockRpcServer {
                 val body = request.body.readUtf8()
                 val requestJson = runCatching { JSONObject(body) }.getOrNull()
                 val method = requestJson?.optString("method", "").orEmpty()
-                synchronized(recorded) { recorded += method }
+                synchronized(recorded) {
+                    recorded += method
+                    recordedBodyList += body
+                }
 
                 // A parameter-specific stub wins over the method-wide one, so a test can give
                 // different answers for e.g. getAccountInfo on a mint vs on a token account.
@@ -158,7 +162,14 @@ internal class MockRpcServer {
     val recordedMethods: List<String>
         get() = synchronized(recorded) { recorded.toList() }
 
+    /** Raw request bodies in dispatch order, parallel to [recordedMethods] — for asserting on params. */
+    val recordedBodies: List<String>
+        get() = synchronized(recorded) { recordedBodyList.toList() }
+
     fun resetRecordings() {
-        synchronized(recorded) { recorded.clear() }
+        synchronized(recorded) {
+            recorded.clear()
+            recordedBodyList.clear()
+        }
     }
 }

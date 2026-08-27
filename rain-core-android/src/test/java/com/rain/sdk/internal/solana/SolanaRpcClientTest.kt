@@ -253,7 +253,97 @@ class SolanaRpcClientTest {
         }
     }
 
+    // ---------- signatures ----------
+
+    @Test
+    fun `getSignaturesSince scans newer than the baseline, newest first`(): Unit = runBlocking {
+        rpc.stubObject(
+            "getSignaturesForAddress",
+            JSONArray()
+                .put(JSONObject().put("signature", "newest").put("slot", 151))
+                .put(JSONObject().put("signature", "older").put("slot", 150))
+        )
+
+        val signatures = client().getSignaturesSince(url(), wallet, until = "baseline")
+
+        assertThat(signatures).containsExactly("newest", "older").inOrder()
+        assertThat(rpc.recordedBodies.single()).contains("\"until\":\"baseline\"")
+    }
+
+    @Test
+    fun `getSignaturesSince omits the cursor for a wallet with no history`(): Unit = runBlocking {
+        rpc.stubObject("getSignaturesForAddress", JSONArray())
+
+        val signatures = client().getSignaturesSince(url(), wallet, until = null)
+
+        assertThat(signatures).isEmpty()
+        assertThat(rpc.recordedBodies.single()).doesNotContain("until")
+    }
+
+    // ---------- getTransaction ----------
+
+    @Test
+    fun `getTransaction reads the fee payer and a clean meta`(): Unit = runBlocking {
+        rpc.stubObject("getTransaction", transactionValue(feePayer = wallet, err = JSONObject.NULL))
+
+        val record = client().getTransaction(url(), "sig")
+
+        assertThat(record?.feePayer).isEqualTo(wallet)
+        assertThat(record?.error).isNull()
+        assertThat(record?.succeeded).isTrue()
+        assertThat(rpc.recordedBodies.single()).contains("\"commitment\":\"confirmed\"")
+        assertThat(rpc.recordedBodies.single()).contains("\"maxSupportedTransactionVersion\":0")
+    }
+
+    @Test
+    fun `getTransaction surfaces an on-chain error`(): Unit = runBlocking {
+        val err = JSONObject().put("InstructionError", JSONArray().put(0).put("InsufficientFunds"))
+        rpc.stubObject("getTransaction", transactionValue(feePayer = wallet, err = err))
+
+        val record = client().getTransaction(url(), "sig")
+
+        assertThat(record?.succeeded).isFalse()
+        assertThat(record?.error).contains("InsufficientFunds")
+    }
+
+    @Test
+    fun `getTransaction accepts jsonParsed account keys`(): Unit = runBlocking {
+        val value = transactionValue(feePayer = wallet, err = JSONObject.NULL)
+        value.getJSONObject("transaction").getJSONObject("message").put(
+            "accountKeys",
+            JSONArray().put(JSONObject().put("pubkey", wallet).put("signer", true).put("writable", true))
+        )
+        rpc.stubObject("getTransaction", value)
+
+        assertThat(client().getTransaction(url(), "sig")?.feePayer).isEqualTo(wallet)
+    }
+
+    @Test
+    fun `getTransaction returns null for a signature the cluster does not know`(): Unit = runBlocking {
+        rpc.stubObject("getTransaction", JSONObject.NULL)
+
+        assertThat(client().getTransaction(url(), "sig")).isNull()
+    }
+
+    @Test
+    fun `getTransaction fails loudly on a malformed response`() {
+        rpc.stubObject("getTransaction", JSONObject().put("slot", 1))
+        assertThrows(RainError.InternalError::class.java) {
+            runBlocking { client().getTransaction(url(), "sig") }
+        }
+    }
+
     // ---------- fixtures ----------
+
+    private fun transactionValue(feePayer: String, err: Any): JSONObject = JSONObject()
+        .put("slot", 150)
+        .put(
+            "transaction",
+            JSONObject()
+                .put("signatures", JSONArray().put("sig"))
+                .put("message", JSONObject().put("accountKeys", JSONArray().put(feePayer).put(tokenAccount)))
+        )
+        .put("meta", JSONObject().put("err", err).put("fee", 5000))
 
     /** Wraps [value] in the `{context, value}` envelope every Solana account read returns. */
     private fun contextual(value: Any): JSONObject =
