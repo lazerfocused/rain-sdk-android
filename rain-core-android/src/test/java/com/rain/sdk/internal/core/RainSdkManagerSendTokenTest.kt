@@ -154,20 +154,78 @@ class RainSdkManagerSendTokenTest {
     }
 
     @Test
-    fun `sendToken falls back to default decimals when no token store is available`(): Unit = runBlocking {
+    fun `sendToken throws instead of guessing decimals when the on-chain read fails`() {
+        // A guessed 18 against a 6-decimal token would move 10^12 times the intended amount,
+        // so a failed decimals() read must stop the send before the provider is contacted.
+        val reader = MockChainReader(decimals = 6, metadataError = RuntimeException("rpc down"))
+        val (manager, stub) = TestManagers.stubProviderManager(tokenStore = TokenMetadataStore(reader))
+
+        val ex = assertThrows(RainError.TokenNotFound::class.java) {
+            runBlocking {
+                manager.sendToken(
+                    chainId = 1,
+                    contractAddress = TestFixtures.TOKEN_ADDRESS,
+                    to = TestFixtures.RECIPIENT_ADDRESS,
+                    amount = BigDecimal("1.0"),
+                    decimals = null
+                )
+            }
+        }
+
+        assertThat(ex.token).isEqualTo(TestFixtures.TOKEN_ADDRESS)
+        assertThat(ex.chainId).isEqualTo(1)
+        assertThat(stub.sendTokenCalls).isEmpty()
+    }
+
+    @Test
+    fun `sendToken retries a failed decimals read on the next call rather than caching a guess`(): Unit = runBlocking {
+        val reader = MockChainReader(decimals = 6, metadataError = RuntimeException("rpc down"))
+        val (manager, stub) = TestManagers.stubProviderManager(tokenStore = TokenMetadataStore(reader))
+
+        assertThrows(RainError.TokenNotFound::class.java) {
+            runBlocking {
+                manager.sendToken(1, TestFixtures.TOKEN_ADDRESS, TestFixtures.RECIPIENT_ADDRESS, BigDecimal("1.0"), null)
+            }
+        }
+        reader.metadataError = null
+
+        manager.sendToken(1, TestFixtures.TOKEN_ADDRESS, TestFixtures.RECIPIENT_ADDRESS, BigDecimal("1.0"), null)
+
+        assertThat(stub.sendTokenCalls.single().decimals).isEqualTo(6)
+    }
+
+    @Test
+    fun `sendToken rejects decimals outside the scalable range`() {
+        val reader = MockChainReader(decimals = 78)
+        val (manager, stub) = TestManagers.stubProviderManager(tokenStore = TokenMetadataStore(reader))
+
+        assertThrows(RainError.InvalidConfig::class.java) {
+            runBlocking {
+                manager.sendToken(1, TestFixtures.TOKEN_ADDRESS, TestFixtures.RECIPIENT_ADDRESS, BigDecimal("1.0"), null)
+            }
+        }
+
+        assertThat(stub.sendTokenCalls).isEmpty()
+    }
+
+    @Test
+    fun `sendToken throws when no token store can resolve decimals`() {
         val (manager, stub) = TestManagers.stubProviderManager()
-        // No token store installed.
+        // No token store installed: nothing can establish the scale, so nothing may be sent.
 
-        manager.sendToken(
-            chainId = 1,
-            contractAddress = TestFixtures.TOKEN_ADDRESS,
-            to = TestFixtures.RECIPIENT_ADDRESS,
-            amount = BigDecimal("1.0"),
-            decimals = null
-        )
+        assertThrows(RainError.TokenNotFound::class.java) {
+            runBlocking {
+                manager.sendToken(
+                    chainId = 1,
+                    contractAddress = TestFixtures.TOKEN_ADDRESS,
+                    to = TestFixtures.RECIPIENT_ADDRESS,
+                    amount = BigDecimal("1.0"),
+                    decimals = null
+                )
+            }
+        }
 
-        assertThat(stub.sendTokenCalls.single().decimals)
-            .isEqualTo(com.rain.sdk.interfaces.RainClient.DEFAULT_ERC20_DECIMALS)
+        assertThat(stub.sendTokenCalls).isEmpty()
     }
 
     @Test
@@ -283,7 +341,9 @@ class RainSdkManagerSendTokenTest {
                     chainId = 1,
                     contractAddress = TestFixtures.TOKEN_ADDRESS,
                     to = TestFixtures.RECIPIENT_ADDRESS,
-                    amount = BigDecimal("100.0")
+                    amount = BigDecimal("100.0"),
+                    // Explicit: no token store here, and decimals resolution is not the subject.
+                    decimals = 6
                 )
             }
         }
