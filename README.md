@@ -249,7 +249,8 @@ val adminSignature = RainAdminSignature(
     expiresAt = "2024-12-31T23:59:59Z"
 )
 
-// Sign and submit via the backing provider, returns the tx hash
+// Sign and submit via the backing provider, returns the tx hash.
+// Always broadcasts: the 1.0.x `autoSend = false` prepare-only default is gone (see prepareWithdrawal).
 val txHash = client.withdrawCollateral(
     chainId = 43114,
     addresses = addresses,
