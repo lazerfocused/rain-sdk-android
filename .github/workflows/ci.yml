@@ -78,3 +78,42 @@ jobs:
           require_tests: true
           detailed_summary: true
           include_passed: false
+
+  minified-sample:
+    name: Minified sample (R8 consumer-rule check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      # The sample's release build runs R8 like a host app would. The build alone proves
+      # little (a dependency adds -ignorewarnings), so the script inspects the dex.
+      - name: Build minified sample
+        run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Check web3j keep rules survived R8
+        run: scripts/check-r8-web3j-keeps.sh
+
+      - name: Upload R8 outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r8-outputs
+          path: app/build/outputs/mapping/release/
+          if-no-files-found: warn

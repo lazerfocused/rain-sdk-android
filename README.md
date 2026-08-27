@@ -341,6 +341,15 @@ imageView.setImageBitmap(bitmap)
 
 For a complete reference of all public methods, parameters, types, and error codes, see the [Method Reference](docs/METHODS.md).
 
+
+## R8 / ProGuard
+
+Hosts with `minifyEnabled = true` need no extra rules: each module ships `consumer-rules.pro`
+(keeps for web3j's reflective ABI decoding — `TypeReference` subclasses, `org.web3j.abi.datatypes`,
+and the `Signature` attribute), and Gradle merges them into your release configuration. The sample
+app's release build is minified and CI verifies those keeps survive R8
+(`scripts/check-r8-web3j-keeps.sh`).
+
 ## License
 
 Apache License 2.0. See the [LICENSE](LICENSE) file for details.
