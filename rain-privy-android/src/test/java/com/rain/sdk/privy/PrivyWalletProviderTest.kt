@@ -143,6 +143,27 @@ class PrivyWalletProviderTest {
     }
 
     @Test
+    fun `an already-classified RainError from the eth_call preflight surfaces unchanged`() = runBlocking {
+        // A transport failure during the preflight is retryable. Wrapped as a simulation
+        // failure it would escalate to WithdrawalRevertedByNetwork and tell the host not to retry.
+        for (classified in listOf(RainError.NetworkError("RPC request failed for eth_call"), RainError.TokenExpired())) {
+            val manager = mockk<PrivyManager>()
+            val rpc = mockk<PrivyRpcClient>()
+            coEvery {
+                rpc.callForHexResult(RPC, "eth_call", any(), RpcCallPurpose.SIMULATION)
+            } throws classified
+
+            val wallet = provider(manager, rpc)
+            val error = runCatching {
+                wallet.sendTransaction(chainId = 1, from = WALLET, to = TO, data = "0x", value = "0x1")
+            }.exceptionOrNull()
+
+            assertThat(error).isSameInstanceAs(classified)
+            coVerify(exactly = 0) { manager.sendTransaction(any(), any(), any()) }
+        }
+    }
+
+    @Test
     fun `estimateTransactionFee multiplies gas limit by gas price`() = runBlocking {
         val manager = mockk<PrivyManager>()
         val rpc = mockk<PrivyRpcClient>()
