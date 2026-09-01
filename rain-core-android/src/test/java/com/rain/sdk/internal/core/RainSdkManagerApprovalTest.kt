@@ -603,6 +603,36 @@ class RainSdkManagerApprovalTest {
         assertThat(error.message).contains("below the requested")
     }
 
+    /**
+     * The mirror image: the wallet had 1000, the host lowered it to 500, and the `approve` reverted
+     * inside a bundle whose transaction succeeded. The pinned read still says 1000 — more than
+     * requested is just as wrong as less, since `approve` sets the value outright.
+     */
+    @Test
+    fun `an approval that lowered the allowance but left the old value fails`(): Unit = runBlocking {
+        val reader = MockChainReader(
+            receiptStatus = true,
+            allowance = BigInteger.valueOf(1_000_000_000)
+        )
+        val (manager, _, _) = TestManagers.approvalManager(
+            reader = reader,
+            seedTokens = listOf(usdcInfo())
+        )
+
+        val error = assertThrows(RainError.InternalError::class.java) {
+            runBlocking {
+                manager.confirmTokenAllowance(
+                    transactionHash = "0x" + "1".repeat(64),
+                    chainId = chainId,
+                    contractAddress = usdc,
+                    spender = spender,
+                    amount = BigDecimal("500")
+                )
+            }
+        }
+        assertThat(error.message).contains("above the requested")
+    }
+
     /** The unlimited approval is held to the same standard: anything short of `uint256` max fails. */
     @Test
     fun `an unlimited approval that left less than uint256 max fails`(): Unit = runBlocking {
