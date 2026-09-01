@@ -5,7 +5,7 @@ Android SDK that connects an MPC or embedded wallet — [Portal](https://portalh
 messages, compose withdrawal transactions, sign and submit via a registered wallet provider, read
 balances and history, and estimate fees. Works on EVM chains and Solana.
 
-- **Portal wallet integration** — Register a `PortalProvider` with a Portal session token and resolve a client; use the connected MPC wallet for signing and sending transactions. See [docs/PORTAL_SUPPORT.md](docs/PORTAL_SUPPORT.md) for session refresh and retry behavior.
+- **Portal wallet integration** — Register a `PortalProvider` with a Portal session token and resolve a client; use the connected MPC wallet for signing and sending transactions. Session refresh is host-driven via `PortalConfig.onSessionTokenNeeded` / `onSessionExpired`; see the adapter table in [docs/METHODS.md](docs/METHODS.md#provider-adapters).
 - **Turnkey wallet integration** — Register a `TurnkeyProvider` with an authenticated `TurnkeyContext` (passkeys / auth proxy / OAuth / OTP handled outside Rain by the Turnkey Kotlin SDK). See [docs/TURNKEY_SUPPORT.md](docs/TURNKEY_SUPPORT.md).
 - **Privy wallet integration** — Register a `PrivyProvider` with an authenticated `Privy` instance; embedded EVM and Solana wallets are used for custody.
 - **Solana support** — Native SOL and SPL transfers, balances, history, and collateral withdrawal, on the same `RainClient` methods as EVM. See [Solana](#9-solana).
@@ -367,8 +367,8 @@ val result = client.approveTokenAllowance(
 )
 println(result.transactionHash)
 
-// A hash means submitted, not ready. Wait for a successful receipt, then read the allowance that
-// actually landed — it can be lower than approved if an authorization already pulled against it.
+// A hash means submitted, not ready. Confirm reads the allowance back at the mined block; a
+// timeout is TransactionPending (carrying the hash), not failure — re-read, don't re-approve.
 val confirmed = client.confirmTokenAllowance(
     transactionHash = result.transactionHash,
     chainId = RainChain.BASE_SEPOLIA,

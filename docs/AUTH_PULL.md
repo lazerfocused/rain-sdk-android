@@ -229,17 +229,11 @@ val updated = client.confirmTokenAllowance(
 )
 ```
 
-**The result can legitimately be lower than what you approved.** Auth Pull spends this very
-allowance, and USDC decrements it on every `transferFrom` — including a `uint256` max one, which
-Circle's token does not special-case. An authorization that pulls between the receipt and the read
-therefore leaves less than was approved, and that is a success, not a failure. Compare `rawAmount`
-(or `covers`) against what you still need rather than against what you asked for.
-
-Two outcomes are genuine failures and throw: a mined revoke that left a spendable allowance, and a
-mined approval whose allowance is still zero — the shape a wrong owner, token, or spender produces.
-A reverted receipt throws `TransactionSimulationFailed`; exhausting the poll window throws
-`NetworkError`, which means "not confirmed yet", not "failed" — re-read the allowance rather than
-re-approving.
+The allowance is read at the block the approval mined in, so it must equal what was requested;
+anything else (including a revoke that left a spendable allowance) throws `InternalError`. A
+reverted receipt throws `TransactionSimulationFailed`. Exhausting the 60s window throws
+`TransactionPending` with the transaction hash as `statusId` — not confirmed *yet*: re-read the
+allowance or confirm again, don't re-approve. Transient RPC failures are retried inside the window.
 
 Once the allowance is in place, no further app action is required. Rain pulls the full
 authorization amount into the user's collateral contract at authorization time.
@@ -268,7 +262,7 @@ token whose `decimals()` read fails — register it up front with `registerToken
 
 | Provider | Approve / allowance / fee estimate | Notes |
 |---|---|---|
-| **Portal** | Supported | Broadcast goes through `WalletProvider.sendTransaction`, the same path withdrawals use; Portal's pre-simulation applies to approvals unchanged. |
+| **Portal** | Supported | Broadcast goes through `WalletProvider.sendTransaction`, the same path withdrawals use; Portal's pre-simulation applies to approvals unchanged. On chains where the Portal environment uses account abstraction, see [Portal and account abstraction](#portal-and-account-abstraction). |
 | **Privy** | Supported | Same generic path, carrying the approve calldata unchanged. |
 | **Turnkey** | Supported | Approvals ride the same signed-transaction pipeline as any other ERC-20 send; no Turnkey-specific gating is needed. |
 
@@ -284,21 +278,36 @@ provider is asked for one thing: the wallet address to read the allowance *for*,
 |---|---|---|
 | `RAIN_102` | `RainError.InvalidConfig` | Auth Pull is not configured, target differs from the trusted token/operator, malformed input, wrong chain/environment, or the token reports decimals outside `0..77`. Local configuration failures occur before wallet access. |
 | `RAIN_102` | `RainError.TokenNotFound` | The token's decimals could not be established (not in the registry and its `decimals()` read failed), so a capped amount cannot be scaled safely. Never raised for an unlimited approval. |
-| `RAIN_301` | `RainError.NetworkError` | `confirmTokenAllowance` exhausted its 60s poll window. Not confirmed yet — re-read the allowance, don't re-approve. |
+| `RAIN_301` | `RainError.NetworkError` | A network failure on the RPC read or on a provider's pre-flight simulation. Retryable; nothing was signed or broadcast. |
+| `RAIN_303` | `RainError.TransactionPending` | Confirmation window (`statusId` = transaction hash) or Portal UserOperation scan (`statusId` = UserOperation hash) expired. Not confirmed yet — re-read the allowance, don't re-approve. |
 | `RAIN_401` | `RainError.UserRejected` | The user declined the signature in the wallet UI. |
 | `RAIN_402` | `RainError.InsufficientFunds` | Not enough native gas to submit the approval. |
 | `RAIN_403` | `RainError.TransactionSimulationFailed` | Preflight simulation reverted (providers that simulate), or `confirmTokenAllowance` found a mined receipt that reverted. |
 | `RAIN_404` | `RainError.WalletUnavailable` | The wallet provider has no address — the user has not connected or created a wallet. Reachable on any approval or fee estimate (they resolve the `from` address), and on an allowance read or confirmation with `owner` omitted. |
 | `RAIN_406` | `RainError.InvalidAmount` | Negative amount, or more decimal places than the token supports. |
 | `RAIN_501` | `RainError.ProviderError` | The wallet provider failed for its own reasons. |
-| `RAIN_502` | `RainError.InternalError` | ABI encoding failed, a Solana chain ID was passed (approvals are EVM-only), or a mined allowance contradicted the request (revoke left a spendable allowance, or an approval left zero). |
+| `RAIN_502` | `RainError.InternalError` | ABI encoding failed, a Solana chain ID was passed (approvals are EVM-only), or a mined allowance contradicted the request (a revoke left a spendable allowance, or an approval left anything but the requested amount). |
 
 Errors are always `RainError`; vendor errors are wrapped, never surfaced raw.
 
+## Portal and account abstraction
+
+On chains where the Portal environment uses account abstraction, `eth_sendTransaction` returns a
+**UserOperation hash**, which no node can look up. The adapter resolves it: it reads the block
+number before submitting (retried 3×), then for up to 20 seconds checks the hash as a transaction
+and scans the canonical EntryPoints (v0.6–v0.8) for its `UserOperationEvent`. A mined operation
+returns the bundling transaction's hash — what `confirmTokenAllowance` accepts; one whose `success`
+flag is false throws `TransactionSimulationFailed`.
+
+If the window expires, hosts get `TransactionPending` (`RAIN_303`) with `statusId` = the
+UserOperation hash. The bundler has it and it will most likely still mine: don't re-approve; re-read
+with `getTokenAllowance`. Chains without account abstraction resolve on the first check.
+
 ## Not covered
 
-EIP-2612 `permit` (gasless) approvals, gasless / sponsored approval transactions, non-USDC assets,
-and account-abstraction flows are out of scope for this release.
+EIP-2612 `permit` (gasless) approvals, sponsored approvals, and non-USDC assets are out of scope.
+Account abstraction is supported only as described above (Portal UserOperation resolution), not as a
+general ERC-4337 integration.
 
 ## See also
 

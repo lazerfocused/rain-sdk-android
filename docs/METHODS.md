@@ -172,7 +172,7 @@ Each adapter is a `RainProvider` descriptor that owns its vendor SDK as a privat
 
 | Adapter | Module | Config | Notes |
 |---------|--------|--------|-------|
-| `PortalProvider(PortalConfig(sessionToken, chainId?, autoApprove?, sessionPolicy?, onSessionTokenNeeded?, onSessionExpired?))` | `rain-portal-android` | `sessionToken: String`, `chainId: Int?`, `autoApprove: Boolean = true`, `sessionPolicy: PortalSessionPolicy`, `onSessionTokenNeeded: (suspend () -> String?)?`, `onSessionExpired: (() -> Unit)?` | Portal MPC signer (EVM). Advertises `EXPORT`, `RECOVERY`.|
+| `PortalProvider(PortalConfig(sessionToken, chainId?, sessionPolicy?, onSessionTokenNeeded?, onSessionExpired?, autoApprove?))` | `rain-portal-android` | `sessionToken: String`, `chainId: Int?`, `sessionPolicy: PortalSessionPolicy`, `onSessionTokenNeeded: (suspend () -> String?)?`, `onSessionExpired: (() -> Unit)?`, `autoApprove: Boolean = true` | Portal MPC signer (EVM). Advertises `EXPORT`, `RECOVERY`.|
 | `TurnkeyProvider(TurnkeyConfig(turnkey, walletAddress?, sessionPolicy?, onSessionExpired?))` | `rain-core-android` | `turnkey: TurnkeyContext`, `walletAddress: String?`, `sessionPolicy: TurnkeySessionPolicy`, `onSessionExpired: (() -> Unit)?` | Turnkey P256 signer (EVM + Solana). Advertises `MULTI_CHAIN`, `BIOMETRIC_GATE`. See [TURNKEY_SUPPORT.md](TURNKEY_SUPPORT.md). |
 | `PrivyProvider(PrivyConfig(privy, walletAddress?, sessionPolicy?, onSessionExpired?))` | `rain-privy-android` | `privy: Privy`, `walletAddress: String?`, `sessionPolicy: PrivySessionPolicy`, `onSessionExpired: (() -> Unit)?` | Privy embedded-wallet signer (EVM + Solana). Advertises `EXPORT`, `RECOVERY`, `MULTI_CHAIN`.|
 
@@ -496,14 +496,12 @@ transaction hash alone means submitted, not ready: use this before treating the 
 Auth Pull.
 
 Polls `eth_getTransactionReceipt` once a second for up to 60 seconds, then reads the allowance
-through the same path as `getTokenAllowance`.
+through the same path as `getTokenAllowance`, pinned to the block the transaction mined in.
 
 - **Returns:** `RainTokenAllowance` — the allowance actually in place after the transaction mined.
-- **Throws:** `RainError`. A reverted receipt throws `RainError.TransactionSimulationFailed`; an
-  exhausted poll window throws `RainError.NetworkError` (not confirmed *yet* — re-read the
-  allowance rather than re-approving). `RainError.InternalError` is thrown only when the mined
-  allowance contradicts the request: a revoke that left a spendable allowance, or an approval whose
-  allowance is still zero.
+- **Throws:** `RainError`. Reverted receipt → `TransactionSimulationFailed`; poll window exhausted →
+  `TransactionPending` with the transaction hash as `statusId` (not confirmed *yet* — re-read, don't
+  re-approve); mined allowance not equal to the request, or a Solana `chainId` → `InternalError`.
 - **Suspend:** Yes
 
 | Parameter | Type | Description |
@@ -845,6 +843,7 @@ Format: `"RainSDK Error [CODE]: message"`
 | `RAIN_201` | `RainError.TokenExpired` | Provider session token expired or invalid. |
 | `RAIN_202` | `RainError.Unauthorized` | Invalid or missing token / permissions. |
 | `RAIN_301` | `RainError.NetworkError` | Network/connectivity failure. |
+| `RAIN_303` | `RainError.TransactionPending` | Submitted, not yet confirmed. `statusId` is what to resume from (status id, UserOperation hash, or transaction hash). Do not resend. |
 | `RAIN_401` | `RainError.UserRejected` | User cancelled the signing request in the wallet. |
 | `RAIN_402` | `RainError.InsufficientFunds` | Balance too low for the requested amount or gas. |
 | `RAIN_403` | `RainError.TransactionSimulationFailed` | Preflight `eth_call` simulation failed (e.g. contract revert, insufficient funds). |
