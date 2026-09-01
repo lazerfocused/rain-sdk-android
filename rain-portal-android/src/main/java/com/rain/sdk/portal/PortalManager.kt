@@ -17,6 +17,7 @@ import java.math.BigInteger
 import io.portalhq.android.api.data.GetTransactionsOrder
 import io.portalhq.android.api.data.Transaction
 import io.portalhq.android.storage.mobile.PortalNamespace
+import io.portalhq.android.provider.data.PortalProviderResult
 import io.portalhq.android.provider.data.PortalProviderRpcResponse
 import io.portalhq.android.provider.data.PortalRequestMethod
 import org.web3j.abi.FunctionEncoder
@@ -44,7 +45,10 @@ import java.math.BigDecimal
  * Provides a clean API for signing and sending transactions through Portal,
  * and manages the Portal instance lifecycle.
  */
-internal class PortalManager {
+internal class PortalManager(
+  /** Pause between post-submit retries (UserOperation scan, block-number read); injectable for tests. */
+  private val retryIntervalMs: Long = UserOperationLookup.INTERVAL_MS
+) {
 
   @Volatile
   private var _portal: Portal? = null
@@ -85,6 +89,21 @@ internal class PortalManager {
     this.featureFlags = featureFlags
     this.autoApprove = autoApprove
     swapPortal(apiKey)
+  }
+
+  /**
+   * Round-trips the session token against Portal's API. Construction never touches the network,
+   * so this is where a rejected token first fails — as [RainError.TokenExpired], not a raw 401.
+   */
+  suspend fun verifySession() {
+    val portal = getPortalInstance()
+    try {
+      portal.api.getClient()
+    } catch (e: Exception) {
+      if (e is CancellationException || e is RainError) throw e
+      throw PortalErrorMapping.mapAuthOrNull(e)
+        ?: if (PortalErrorMapping.isTransient(e)) RainError.NetworkError(cause = e) else RainError.ProviderError(e)
+    }
   }
 
   /** Rebuilds the client around a new token with the config from [initialize]; MPC shares survive. */
@@ -501,10 +520,13 @@ internal class PortalManager {
       )
     } catch (e: Exception) {
       if (e is CancellationException) throw e
+      if (e is RainError) throw e
       Timber.e(e, "Rain SDK: Transaction simulation failed (eth_call)")
-      // Auth failures (401 / invalid API key) surface as TokenExpired even here; anything
-      // else that fails the pre-flight is a simulation failure.
+      // A rejected token is a session problem and a network failure is retryable: neither is a
+      // verdict on the transaction, and calling them a failed simulation would tell the
+      // withdrawal flow the send reverted when it never left the device.
       PortalErrorMapping.mapAuthOrNull(e)?.let { throw it }
+      if (PortalErrorMapping.isTransient(e)) throw RainError.NetworkError(e.message, e)
       throw RainError.TransactionSimulationFailed(e)
     }
 
@@ -583,13 +605,15 @@ internal class PortalManager {
         return transactionHash
       }
 
-      if (attempt < UserOperationLookup.ATTEMPTS - 1) delay(UserOperationLookup.INTERVAL_MS)
+      if (attempt < UserOperationLookup.ATTEMPTS - 1) delay(retryIntervalMs)
     }
 
-    // Neither shape resolved. Return what Portal gave us rather than failing a submit that may
-    // still land; the caller's own confirmation reports the timeout.
-    Timber.w("Rain SDK: %s did not resolve to a mined transaction", hash)
-    return hash
+    // Neither shape resolved within the window. The operation is out and may still mine, so this
+    // is pending, not failure — and the UserOperation hash is what the host resumes from. Handing
+    // it on as a transaction hash would send the caller's receipt poll after something no node
+    // can ever answer for.
+    Timber.w("Rain SDK: %s did not resolve to a mined transaction within the scan window", hash)
+    throw RainError.TransactionPending(hash)
   }
 
   /** Whether the chain knows this hash as a transaction, mined or pending. */
@@ -637,18 +661,28 @@ internal class PortalManager {
     return transactionHash to userOperationSucceeded(log["data"] as? String)
   }
 
+  /**
+   * Retried on failure: the read has no side effects, and without it the UserOperation scan is
+   * off for this send.
+   */
   private suspend fun currentBlockNumber(portal: Portal, chainId: String): BigInteger? {
-    val response = try {
-      portal.request(
-        chainId = chainId,
-        method = PortalRequestMethod.eth_blockNumber,
-        params = emptyList()
-      )
-    } catch (e: Exception) {
-      if (e is CancellationException) throw e
-      return null
+    var response: PortalProviderResult? = null
+    for (attempt in 0 until UserOperationLookup.BLOCK_NUMBER_ATTEMPTS) {
+      response = try {
+        portal.request(
+          chainId = chainId,
+          method = PortalRequestMethod.eth_blockNumber,
+          params = emptyList()
+        )
+      } catch (e: Exception) {
+        if (e is CancellationException) throw e
+        Timber.w(e, "Rain SDK: eth_blockNumber read failed (attempt %d)", attempt + 1)
+        if (attempt < UserOperationLookup.BLOCK_NUMBER_ATTEMPTS - 1) delay(retryIntervalMs)
+        null
+      }
+      if (response != null) break
     }
-    val hex = (response.result as? PortalProviderRpcResponse)?.result as? String ?: return null
+    val hex = (response?.result as? PortalProviderRpcResponse)?.result as? String ?: return null
     val block = hex.removePrefix("0x").toBigIntegerOrNull(16) ?: return null
     return if (block > BigInteger.ZERO) block else null
   }
@@ -840,4 +874,7 @@ private object UserOperationLookup {
 
   const val ATTEMPTS = 20
   const val INTERVAL_MS = 1_000L
+
+  /** The pre-submit block read is side-effect free, so a failure is worth a couple of retries. */
+  const val BLOCK_NUMBER_ATTEMPTS = 3
 }

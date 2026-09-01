@@ -6,6 +6,7 @@ import com.rain.sdk.internal.core.ConfigManager
 import com.rain.sdk.internal.core.RainSdkManager
 import com.rain.sdk.internal.core.RainTransactionBuilderImpl
 import com.rain.sdk.internal.error.RainError
+import com.rain.sdk.internal.error.ErrorMapper
 import com.rain.sdk.internal.network.chainreader.EvmChainReader
 import com.rain.sdk.internal.network.rainapi.RainApiConfigStore
 import com.rain.sdk.internal.network.rainapi.RainApiService
@@ -29,6 +30,7 @@ import com.rain.sdk.provider.ProviderId
 import com.rain.sdk.provider.RainProvider
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 
 /**
@@ -63,6 +65,8 @@ class RainSdk private constructor(
     initialRainApiCredentials: Pair<String, String>?,
 ) {
     private val mutex = Mutex()
+
+    private val errorMapper = ErrorMapper()
 
     // Concurrent so [reset] can evict safely without holding the resolution mutex.
     private val clients = ConcurrentHashMap<ProviderId, RainClient>()
@@ -244,7 +248,18 @@ class RainSdk private constructor(
         val descriptor = registered[id]
             ?: throw RainError.ProviderNotRegistered("no provider registered for id '${id.value}'")
         val context = sharedContext
-        val walletProvider = descriptor.create(context)
+        // Init-time vendor failures (a rejected session token, most often) go through the same
+        // error contract as every later call; a raw vendor exception here would bypass it exactly
+        // when credentials tend to be wrong.
+        val walletProvider = try {
+            descriptor.create(context)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RainError) {
+            throw e
+        } catch (e: Exception) {
+            throw errorMapper.mapProviderInitError(e)
+        }
         RainSdkManager(
             walletProvider = walletProvider,
             rpcEndpoints = rpcEndpoints,
