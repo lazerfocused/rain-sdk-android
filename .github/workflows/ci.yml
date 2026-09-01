@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'feature/**', 'release/**']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  unit-tests:
+    name: Unit tests (JDK 24 launcher)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 24 runs the forked test JVM (Turnkey AAR is class-file 68). Installed first so the
+      # second setup-java (21, used by Gradle/AGP/Kotlin) becomes JAVA_HOME while 24 stays
+      # reachable as JAVA_HOME_24_X64 for the toolchain resolver.
+      - name: Set up JDK 24 (unit-test launcher)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - name: Set up JDK 21 (Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Print toolchains
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME"; java -version
+          echo "JAVA_HOME_24_X64=$JAVA_HOME_24_X64"; "$JAVA_HOME_24_X64/bin/java" -version
+
+      - name: Run unit tests and skipped-test gate
+        run: >
+          ./gradlew testDebugUnitTest checkNoSkippedUnitTests
+          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_24_X64
+          --stacktrace --no-daemon
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: |
+            **/build/test-results/**/*.xml
+            **/build/reports/tests/**
+          if-no-files-found: warn
+
+      - name: Publish test report
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: '**/build/test-results/testDebugUnitTest/TEST-*.xml'
+          check_name: Unit test report
+          fail_on_failure: true
+          require_tests: true
+          detailed_summary: true
+          include_passed: false

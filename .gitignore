@@ -44,3 +44,4 @@ render.experimental.xml
 *.pem
 *.p12
 *.key
+.kotlin/
