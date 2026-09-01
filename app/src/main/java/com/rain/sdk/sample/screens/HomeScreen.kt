@@ -97,10 +97,12 @@ fun HomeScreen(
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // Locked while a provider is resolved so the session card always describes `mode`.
+        // Locked while a provider is resolving or resolved, so the session card always describes
+        // `mode`. Not gated on sessionStatus: a failed Initialize leaves that set and would lock
+        // the other providers until process death.
         ModeSelector(
             mode = state.mode,
-            enabled = !state.isInitialized && state.sessionStatus == null,
+            enabled = !state.isInitialized && !state.isLoading,
             onModeChanged = viewModel::onModeChanged
         )
 

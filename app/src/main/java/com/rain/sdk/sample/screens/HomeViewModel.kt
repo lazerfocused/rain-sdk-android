@@ -290,11 +290,15 @@ class HomeViewModel(
                 }
             } catch (e: Exception) {
                 SampleLog.e("Portal.init", "failed: ${e.message}", e)
+                // Nothing usable survives a failed init: tear the half-built SDK down so its
+                // session watcher stops reporting, and drop the stale status with it.
+                session.reset()
                 _state.update {
                     it.copy(
                         isLoading = false,
                         statusText = "Error: ${e.message}",
-                        isInitialized = false
+                        isInitialized = false,
+                        sessionStatus = null
                     )
                 }
             }
@@ -467,9 +471,12 @@ class HomeViewModel(
                 }
             } catch (e: Exception) {
                 SampleLog.e("Turnkey.rainInit", "failed: ${e.message}", e)
+                session.reset()
                 _state.update {
                     it.copy(
                         isLoading = false,
+                        isInitialized = false,
+                        sessionStatus = null,
                         statusText = "Rain Turnkey init failed: ${e.message}"
                     )
                 }
@@ -625,8 +632,14 @@ class HomeViewModel(
                 }
             } catch (e: Exception) {
                 SampleLog.e("Privy.rainInit", "failed: ${e.message}", e)
+                session.reset()
                 _state.update {
-                    it.copy(isLoading = false, statusText = "Rain Privy init failed: ${e.message}")
+                    it.copy(
+                        isLoading = false,
+                        isInitialized = false,
+                        sessionStatus = null,
+                        statusText = "Rain Privy init failed: ${e.message}"
+                    )
                 }
             }
         }
