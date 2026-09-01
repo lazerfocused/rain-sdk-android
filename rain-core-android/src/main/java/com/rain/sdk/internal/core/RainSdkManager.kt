@@ -95,7 +95,9 @@ internal class RainSdkManager(
   /** Rain's operator for the configured environment — the only spender an approval may name. */
   private val authPullOperator: String? = null,
   /** The trusted token contract per Auth Pull chain — the only token an approval may target. */
-  private val authPullTokenAddresses: Map<Int, String> = emptyMap()
+  private val authPullTokenAddresses: Map<Int, String> = emptyMap(),
+  /** Pause between confirmation polls; injectable so tests can drive the full window instantly. */
+  private val approvalConfirmationIntervalMs: Long = APPROVAL_CONFIRMATION_INTERVAL_MS
 ) : RainClient {
 
   /** Chains the SDK was initialized with; [getAllBalances] fans out across them. */
@@ -528,7 +530,19 @@ internal class RainSdkManager(
 
     repeat(APPROVAL_CONFIRMATION_ATTEMPTS) { attempt ->
       if (receipt == null) {
-        val mined = chainReader.getTransactionReceipt(chainId, transactionHash)
+        // The approval is already out, so a failed receipt read is a reason to try again, not
+        // a verdict on the transaction. Only a malformed hash is final.
+        val mined = try {
+          chainReader.getTransactionReceipt(chainId, transactionHash)
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: RainError.InvalidConfig) {
+          throw e
+        } catch (e: Exception) {
+          Timber.w(e, "Rain SDK: Receipt read for %s failed; retrying", transactionHash)
+          lastReadFailure = e
+          null
+        }
         if (mined != null && !mined.succeeded) {
           throw RainError.TransactionSimulationFailed(
             IllegalStateException("Approval transaction reverted on-chain: $transactionHash")
@@ -573,33 +587,41 @@ internal class RainSdkManager(
       }
 
       if (attempt < APPROVAL_CONFIRMATION_ATTEMPTS - 1) {
-        delay(APPROVAL_CONFIRMATION_INTERVAL_MS)
+        delay(approvalConfirmationIntervalMs)
       }
     }
 
     val mined = receipt
-      ?: throw RainError.NetworkError(
-        "Timed out waiting for approval transaction $transactionHash to be mined"
+    if (mined == null) {
+      // Not a failure: the approval may still mine. The hash is what the host resumes from —
+      // re-read the allowance or confirm again, never re-approve.
+      Timber.w(
+        lastReadFailure,
+        "Rain SDK: Approval %s was not confirmed within the window",
+        transactionHash
       )
-    throw RainError.NetworkError(
-      message = "Approval transaction $transactionHash mined in block ${mined.blockNumber}, but " +
-        "the allowance could not be read at that block before timing out",
-      cause = lastReadFailure
-    )
+      throw RainError.TransactionPending(transactionHash)
+    }
+    // Mined, but the allowance never read back. Surface the node's own failure where there is
+    // one; a generic timeout would hide why every read at that block failed.
+    throw when (val cause = lastReadFailure) {
+      is RainError -> cause
+      else -> RainError.NetworkError(
+        message = "Approval transaction $transactionHash mined in block ${mined.blockNumber}, but " +
+          "the allowance could not be read at that block before timing out",
+        cause = cause
+      )
+    }
   }
 
   /**
-   * Checks the allowance a mined approval actually left behind.
+   * Checks the allowance a mined approval actually left behind, read at the block it mined in.
    *
-   * Deliberately not an equality check. Auth Pull is the feature that *spends* this allowance: an
-   * authorization can pull between the receipt landing and this read, and USDC decrements the
-   * allowance on every `transferFrom` — including a `uint256` max one, which Circle's token does
-   * not special-case. A value below the requested one is therefore an ordinary outcome of a
-   * successful approval, not a failure.
-   *
-   * What is still a genuine failure: a revoke that left a spendable allowance, and an approval
-   * that mined against nothing (a zero allowance where a non-zero one was requested — the shape a
-   * wrong owner, token, or spender produces).
+   * Pinning the read to that block is what makes the comparison strict: nothing that happens
+   * after the approval can lower what it reads. A value below the requested one therefore means
+   * the approval did not do what was asked — a revoke that left a spendable allowance, an
+   * approval that mined against nothing (the shape a wrong owner, token, or spender produces), or
+   * one that reverted inside a bundle whose transaction as a whole succeeded.
    */
   private fun verifyConfirmedAllowance(allowance: RainTokenAllowance, expectedRaw: BigInteger) {
     if (expectedRaw.signum() == 0) {
@@ -617,11 +639,9 @@ internal class RainSdkManager(
       )
     }
     if (allowance.rawAmount < expectedRaw) {
-      Timber.w(
-        "Rain SDK: Allowance is %s, below the approved %s — an authorization has likely already " +
-          "pulled against it",
-        allowance.rawAmount,
-        expectedRaw
+      throw RainError.InternalError(
+        "Approval mined but the allowance for ${allowance.spender} on ${allowance.tokenAddress} " +
+          "is ${allowance.rawAmount}, below the requested $expectedRaw"
       )
     }
   }
@@ -712,7 +732,7 @@ internal class RainSdkManager(
     }
   }
 
-  private companion object {
+  internal companion object {
     const val APPROVAL_CONFIRMATION_ATTEMPTS = 60
     const val APPROVAL_CONFIRMATION_INTERVAL_MS = 1_000L
   }

@@ -10,6 +10,7 @@ import com.rain.sdk.internal.helpers.TestFixtures
 import com.rain.sdk.internal.helpers.TestManagers
 import com.rain.sdk.models.RainTokenAllowance
 import com.rain.sdk.models.TokenInfo
+import java.io.IOException
 import java.math.BigDecimal
 import java.math.BigInteger
 import kotlinx.coroutines.runBlocking
@@ -572,52 +573,56 @@ class RainSdkManagerApprovalTest {
         }
 
     /**
-     * Auth Pull spends the very allowance being confirmed, so a value below the approved one is an
-     * ordinary outcome — the authorization got there first. Confirming must not call that a
-     * failure.
+     * The read is pinned to the block the approval mined in, so nothing later can lower it: a
+     * value below the requested one means the approval itself fell short — the wallet already had
+     * 250, the host raised it to 500, and the `approve` reverted inside a bundle whose transaction
+     * succeeded. Reading back 250 and calling that confirmed would be a lie.
      */
     @Test
-    fun `an allowance already partly pulled still confirms`(): Unit = runBlocking {
+    fun `an allowance below the requested amount fails`(): Unit = runBlocking {
         val reader = MockChainReader(
             receiptStatus = true,
-            allowance = BigInteger.valueOf(100_000_000)
+            allowance = BigInteger.valueOf(250_000_000)
         )
         val (manager, _, _) = TestManagers.approvalManager(
             reader = reader,
             seedTokens = listOf(usdcInfo())
         )
 
-        val allowance = manager.confirmTokenAllowance(
-            transactionHash = "0x" + "c".repeat(64),
-            chainId = chainId,
-            contractAddress = usdc,
-            spender = spender,
-            amount = BigDecimal("250")
-        )
-
-        assertThat(allowance.rawAmount).isEqualTo(BigInteger.valueOf(100_000_000))
+        val error = assertThrows(RainError.InternalError::class.java) {
+            runBlocking {
+                manager.confirmTokenAllowance(
+                    transactionHash = "0x" + "c".repeat(64),
+                    chainId = chainId,
+                    contractAddress = usdc,
+                    spender = spender,
+                    amount = BigDecimal("500")
+                )
+            }
+        }
+        assertThat(error.message).contains("below the requested")
     }
 
-    /** USDC decrements even a `uint256` max allowance on every `transferFrom`. */
+    /** The unlimited approval is held to the same standard: anything short of `uint256` max fails. */
     @Test
-    fun `an unlimited approval confirms after a pull decremented it`(): Unit = runBlocking {
-        val decremented = RainTokenAllowance.UNLIMITED_RAW_AMOUNT
-            .subtract(BigInteger.valueOf(1_000_000))
-        val reader = MockChainReader(receiptStatus = true, allowance = decremented)
+    fun `an unlimited approval that left less than uint256 max fails`(): Unit = runBlocking {
+        val short = RainTokenAllowance.UNLIMITED_RAW_AMOUNT.subtract(BigInteger.ONE)
+        val reader = MockChainReader(receiptStatus = true, allowance = short)
         val (manager, _, _) = TestManagers.approvalManager(
             reader = reader,
             seedTokens = listOf(usdcInfo())
         )
 
-        val allowance = manager.confirmTokenAllowance(
-            transactionHash = "0x" + "d".repeat(64),
-            chainId = chainId,
-            contractAddress = usdc,
-            spender = spender
-        )
-
-        assertThat(allowance.rawAmount).isEqualTo(decremented)
-        assertThat(allowance.isUnlimited).isFalse()
+        assertThrows(RainError.InternalError::class.java) {
+            runBlocking {
+                manager.confirmTokenAllowance(
+                    transactionHash = "0x" + "d".repeat(64),
+                    chainId = chainId,
+                    contractAddress = usdc,
+                    spender = spender
+                )
+            }
+        }
     }
 
     @Test
@@ -684,6 +689,205 @@ class RainSdkManagerApprovalTest {
         assertThat(reader.receiptCalls).hasSize(2)
         assertThat(reader.allowanceCalls).hasSize(1)
     }
+
+    // ---- confirmation survives node blips and reports the right thing on timeout -------
+
+    /** The approval is already out: one failed receipt read is a retry, not a hard error. */
+    @Test
+    fun `a receipt read that fails mid-poll is retried`(): Unit = runBlocking {
+        val reader = MockChainReader(
+            receiptStatus = true,
+            allowance = BigInteger.valueOf(250_000_000),
+            receiptFailures = mutableListOf(RainError.NetworkError("connection reset"))
+        )
+        val (manager, _, _) = TestManagers.approvalManager(
+            reader = reader,
+            seedTokens = listOf(usdcInfo())
+        )
+
+        val allowance = manager.confirmTokenAllowance(
+            transactionHash = "0x" + "6".repeat(64),
+            chainId = chainId,
+            contractAddress = usdc,
+            spender = spender,
+            amount = BigDecimal("250")
+        )
+
+        assertThat(allowance.rawAmount).isEqualTo(BigInteger.valueOf(250_000_000))
+        assertThat(reader.receiptCalls).hasSize(2)
+    }
+
+    /** A malformed hash is a verdict on the input, not a node blip: it must not burn the window. */
+    @Test
+    fun `an invalid hash is rejected at once rather than retried for the whole window`(): Unit =
+        runBlocking {
+            val reader = MockChainReader(
+                receiptFailures = mutableListOf(RainError.InvalidConfig("Invalid transaction hash"))
+            )
+            val (manager, _, _) = TestManagers.approvalManager(
+                reader = reader,
+                seedTokens = listOf(usdcInfo())
+            )
+
+            assertThrows(RainError.InvalidConfig::class.java) {
+                runBlocking {
+                    manager.confirmTokenAllowance(
+                        transactionHash = "0x" + "7".repeat(64),
+                        chainId = chainId,
+                        contractAddress = usdc,
+                        spender = spender,
+                        amount = BigDecimal("250")
+                    )
+                }
+            }
+            assertThat(reader.receiptCalls).hasSize(1)
+        }
+
+    /**
+     * Not mined by the end of the window is pending, not failure: the host resumes from the hash
+     * (re-read or confirm again) instead of re-approving.
+     */
+    @Test
+    fun `an approval that never mines surfaces as TransactionPending carrying the hash`(): Unit =
+        runBlocking {
+            val hash = "0x" + "8".repeat(64)
+            val reader = MockChainReader(receiptStatus = null)
+            val (manager, _, _) = TestManagers.approvalManager(
+                reader = reader,
+                seedTokens = listOf(usdcInfo())
+            )
+
+            val error = assertThrows(RainError.TransactionPending::class.java) {
+                runBlocking {
+                    manager.confirmTokenAllowance(
+                        transactionHash = hash,
+                        chainId = chainId,
+                        contractAddress = usdc,
+                        spender = spender,
+                        amount = BigDecimal("250")
+                    )
+                }
+            }
+            assertThat(error.statusId).isEqualTo(hash)
+            assertThat(reader.receiptCalls).hasSize(RainSdkManager.APPROVAL_CONFIRMATION_ATTEMPTS)
+        }
+
+    /** Mined, but every allowance read failed: the node's own error is the useful one, not a timeout. */
+    @Test
+    fun `a mined approval whose allowance never reads back surfaces the node's own failure`(): Unit =
+        runBlocking {
+            val reader = MockChainReader(
+                receiptStatus = true,
+                allowanceError = RainError.InternalError("RPC error [-32000]: header not found")
+            )
+            val (manager, _, _) = TestManagers.approvalManager(
+                reader = reader,
+                seedTokens = listOf(usdcInfo())
+            )
+
+            val error = assertThrows(RainError.InternalError::class.java) {
+                runBlocking {
+                    manager.confirmTokenAllowance(
+                        transactionHash = "0x" + "9".repeat(64),
+                        chainId = chainId,
+                        contractAddress = usdc,
+                        spender = spender,
+                        amount = BigDecimal("250")
+                    )
+                }
+            }
+            assertThat(error.message).contains("header not found")
+            assertThat(reader.allowanceCalls).hasSize(RainSdkManager.APPROVAL_CONFIRMATION_ATTEMPTS)
+        }
+
+    /**
+     * The reviewer's scenario: the node is unreachable for the whole window. That is still
+     * "not confirmed yet" — the approval may well have mined — so it must resume from the hash,
+     * not fail as a network error.
+     */
+    @Test
+    fun `receipt reads that fail for the whole window still surface as TransactionPending`(): Unit =
+        runBlocking {
+            val hash = "0x" + "a".repeat(64)
+            val reader = MockChainReader(
+                receiptStatus = true,
+                receiptFailures = MutableList(RainSdkManager.APPROVAL_CONFIRMATION_ATTEMPTS) {
+                    IOException("connection reset")
+                }
+            )
+            val (manager, _, _) = TestManagers.approvalManager(
+                reader = reader,
+                seedTokens = listOf(usdcInfo())
+            )
+
+            val error = assertThrows(RainError.TransactionPending::class.java) {
+                runBlocking {
+                    manager.confirmTokenAllowance(
+                        transactionHash = hash,
+                        chainId = chainId,
+                        contractAddress = usdc,
+                        spender = spender,
+                        amount = BigDecimal("250")
+                    )
+                }
+            }
+            assertThat(error.statusId).isEqualTo(hash)
+            assertThat(reader.receiptCalls).hasSize(RainSdkManager.APPROVAL_CONFIRMATION_ATTEMPTS)
+            assertThat(reader.allowanceCalls).isEmpty()
+        }
+
+    /** Transport failures arrive untyped (OkHttp/JSON), not as RainError — they retry all the same. */
+    @Test
+    fun `an untyped transport failure on the receipt read is retried`(): Unit = runBlocking {
+        val reader = MockChainReader(
+            receiptStatus = true,
+            allowance = BigInteger.valueOf(250_000_000),
+            receiptFailures = mutableListOf(IOException("unexpected end of stream"))
+        )
+        val (manager, _, _) = TestManagers.approvalManager(
+            reader = reader,
+            seedTokens = listOf(usdcInfo())
+        )
+
+        val allowance = manager.confirmTokenAllowance(
+            transactionHash = "0x" + "b".repeat(64),
+            chainId = chainId,
+            contractAddress = usdc,
+            spender = spender,
+            amount = BigDecimal("250")
+        )
+
+        assertThat(allowance.rawAmount).isEqualTo(BigInteger.valueOf(250_000_000))
+        assertThat(reader.receiptCalls).hasSize(2)
+    }
+
+    /** Mined, but every read died on the wire: that is a network error, and the wire error is the cause. */
+    @Test
+    fun `a mined approval whose allowance reads all fail untyped surfaces NetworkError with the cause`():
+        Unit = runBlocking {
+            val wire = IOException("socket closed")
+            val reader = MockChainReader(receiptStatus = true, receiptBlockNumber = "0x2a", allowanceError = wire)
+            val (manager, _, _) = TestManagers.approvalManager(
+                reader = reader,
+                seedTokens = listOf(usdcInfo())
+            )
+
+            val error = assertThrows(RainError.NetworkError::class.java) {
+                runBlocking {
+                    manager.confirmTokenAllowance(
+                        transactionHash = "0x" + "c".repeat(64),
+                        chainId = chainId,
+                        contractAddress = usdc,
+                        spender = spender,
+                        amount = BigDecimal("250")
+                    )
+                }
+            }
+            assertThat(error.cause).isSameInstanceAs(wire)
+            assertThat(error.message).contains("0x2a")
+            assertThat(reader.receiptCalls).hasSize(1)
+            assertThat(reader.allowanceCalls).hasSize(RainSdkManager.APPROVAL_CONFIRMATION_ATTEMPTS)
+        }
 
     // ---- confirmation reads the transaction's own block ------------------------------
     // `allowanceByBlock` is the state at the receipt's block, `allowance` what a lagging node

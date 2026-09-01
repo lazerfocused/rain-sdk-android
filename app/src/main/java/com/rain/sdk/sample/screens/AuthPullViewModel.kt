@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.rain.sdk.interfaces.RainClient
+import com.rain.sdk.internal.error.RainError
 import com.rain.sdk.sample.SampleEnvironment
 import com.rain.sdk.sample.SampleLog
 import com.rain.sdk.sample.WalletChain
@@ -270,6 +271,18 @@ class AuthPullViewModel(
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: RainError.TransactionPending) {
+                // Not a failure: the approval is out and may still mine. Keep the hash and point
+                // at the allowance read — re-approving here would double-spend gas.
+                SampleLog.w("AuthPull.approve", "not confirmed within the window txHash=${e.statusId}")
+                if (requestGeneration != generation) return@launch
+                _state.update {
+                    it.copy(
+                        isApproving = false,
+                        approvalStatus = "Submitted, not yet confirmed",
+                        errorText = "Not confirmed within 60s. Tap Refresh to re-read the allowance; do not re-approve."
+                    )
+                }
             } catch (e: Exception) {
                 SampleLog.e("AuthPull.approve", "failed: ${e.message}", e)
                 if (requestGeneration != generation) return@launch

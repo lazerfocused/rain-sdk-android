@@ -38,6 +38,8 @@ internal class MockChainReader(
      * not yet have the requested block and so errors instead of answering.
      */
     val allowanceFailures: MutableList<Throwable?> = mutableListOf(),
+    /** Consumed one entry per receipt read; a non-null entry is thrown. Models a node blip mid-poll. */
+    val receiptFailures: MutableList<Throwable?> = mutableListOf(),
     var receiptStatus: Boolean? = true,
     /**
      * Consumed one entry per receipt read before falling back to [receiptStatus], so a test can
@@ -165,6 +167,7 @@ internal class MockChainReader(
         transactionHash: String
     ): MinedReceipt? {
         receiptCalls += ReceiptCall(chainId, transactionHash)
+        if (receiptFailures.isNotEmpty()) receiptFailures.removeAt(0)?.let { throw it }
         val status =
             if (receiptStatuses.isNotEmpty()) receiptStatuses.removeAt(0) else receiptStatus
         return status?.let { MinedReceipt(succeeded = it, blockNumber = receiptBlockNumber) }
