@@ -19,6 +19,9 @@ import android.graphics.Bitmap
 import java.math.BigDecimal
 import java.math.BigInteger
 
+/** Default body of the Auth Pull methods: implementations that do not support them keep compiling. */
+private const val AUTH_PULL_NOT_SUPPORTED = "Auth Pull is not supported by this RainClient implementation"
+
 /**
  * Operations Rain exposes against a single, already-resolved wallet provider.
  *
@@ -456,7 +459,7 @@ interface RainClient {
         contractAddress: String,
         spender: String,
         amount: BigDecimal? = null
-    ): RainTokenApprovalResult
+    ): RainTokenApprovalResult = throw RainError.InvalidConfig(AUTH_PULL_NOT_SUPPORTED)
 
     /**
      * Reads the ERC-20 allowance [spender] currently holds over [owner]'s balance.
@@ -473,7 +476,7 @@ interface RainClient {
         contractAddress: String,
         spender: String,
         owner: String? = null
-    ): RainTokenAllowance
+    ): RainTokenAllowance = throw RainError.InvalidConfig(AUTH_PULL_NOT_SUPPORTED)
 
     /**
      * Estimates the total fee (estimated gas x gas price) to submit the approval, in the chain's
@@ -486,23 +489,25 @@ interface RainClient {
         contractAddress: String,
         spender: String,
         amount: BigDecimal? = null
-    ): BigDecimal
+    ): BigDecimal = throw RainError.InvalidConfig(AUTH_PULL_NOT_SUPPORTED)
 
     /**
      * Waits for an approval transaction to mine successfully, then reads back the resulting
-     * allowance. A submitted transaction hash alone does not make Auth Pull ready.
+     * allowance at the block it mined in. A submitted transaction hash alone does not make Auth
+     * Pull ready.
      *
-     * The returned allowance can legitimately be **lower** than [amount]: USDC decrements the
-     * allowance on every `transferFrom`, so an authorization that pulls between the receipt and
-     * this read leaves less than was approved. Compare
-     * [RainTokenAllowance.rawAmount] (or [RainTokenAllowance.covers]) against what you need rather
-     * than against what you asked for. A revoke that left a spendable allowance, and an approval
-     * that mined against a still-zero allowance, both throw.
+     * Because the read is pinned to the transaction's own block, the result is exactly what the
+     * approval left behind: anything but [amount] means the approval did not do what was asked
+     * (wrong owner, token, or spender, or a revert inside a bundle — leaving less when raising
+     * the allowance, more when lowering it) and throws, as does a revoke that left a spendable
+     * allowance.
      *
      * @param amount The allowance that was requested, so the result can be checked against it.
      *               `null` (the default) means the unlimited approval.
      * @throws RainError.TransactionSimulationFailed when the mined transaction reverted.
-     * @throws RainError.NetworkError when confirmation times out.
+     * @throws RainError.TransactionPending when the transaction has not mined by the end of the
+     *   poll window. Not a failure: `statusId` carries [transactionHash]; re-read the allowance or
+     *   confirm again rather than re-approving.
      * @throws RainError.InternalError when the mined allowance contradicts the request.
      */
     @Throws(RainError::class)
@@ -513,7 +518,7 @@ interface RainClient {
         spender: String,
         amount: BigDecimal? = null,
         owner: String? = null
-    ): RainTokenAllowance
+    ): RainTokenAllowance = throw RainError.InvalidConfig(AUTH_PULL_NOT_SUPPORTED)
 
     /**
      * Registers additional tokens with the SDK so their metadata (decimals / symbol) resolves
