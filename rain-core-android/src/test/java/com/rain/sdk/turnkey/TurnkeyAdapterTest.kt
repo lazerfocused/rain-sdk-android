@@ -180,6 +180,34 @@ class TurnkeyAdapterTest {
         assertThat(client.sendTransactionStatusCalls).hasSize(30)
     }
 
+    /**
+     * Turnkey accepted the transaction before the status read failed, so any error but pending
+     * would invite a resend of a live transfer. Not only session expiry: any failure.
+     */
+    @Test
+    fun `sendTransaction surfaces a failed status read after submission as TransactionPending`() {
+        stubSendTransactionRPCs()
+        val turnkey = MockTurnkey()
+        (turnkey.turnkeyClient as MockTurnkeyClient).sendTransactionStatusError =
+            IllegalStateException("status service unavailable")
+        val provider = makeProvider(turnkey)
+
+        val ex = runCatching {
+            runBlocking {
+                provider.sendTransaction(
+                    chainId = 1,
+                    from = MockTurnkey.DEFAULT_WALLET_ADDRESS,
+                    to = TestFixtures.RECIPIENT_ADDRESS,
+                    data = "0x",
+                    value = "0x0"
+                )
+            }
+        }.exceptionOrNull()
+
+        assertThat(ex).isInstanceOf(RainError.TransactionPending::class.java)
+        assertThat((ex as RainError.TransactionPending).statusId).isEqualTo("send-status-id")
+    }
+
     // ---- Polling: failure status path -------------------------------------------
 
     @Test
