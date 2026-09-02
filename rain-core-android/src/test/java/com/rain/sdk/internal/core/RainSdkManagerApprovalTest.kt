@@ -14,6 +14,10 @@ import com.rain.sdk.models.TokenInfo
 import java.io.IOException
 import java.math.BigDecimal
 import java.math.BigInteger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -831,6 +835,42 @@ class RainSdkManagerApprovalTest {
             }
             assertThat(error.statusId).isEqualTo(hash)
             assertThat(reader.receiptCalls).hasSize(RainSdkManager.APPROVAL_CONFIRMATION_ATTEMPTS)
+        }
+
+    /**
+     * Every catch in the poll loop, and the wrapper around it, rethrows CancellationException
+     * before classifying anything. A host that cancels a confirm mid-poll must see the
+     * cancellation, never a TransactionPending or NetworkError dressed up from it.
+     */
+    @Test
+    fun `cancelling a confirm mid-poll propagates the cancellation, not a timeout`(): Unit =
+        runBlocking {
+            val reader = MockChainReader(receiptStatus = null)
+            val (manager, _, _) = TestManagers.approvalManager(
+                reader = reader,
+                seedTokens = listOf(usdcInfo()),
+                approvalConfirmationIntervalMs = 50
+            )
+
+            var outcome: Throwable? = null
+            val job = launch {
+                outcome = runCatching {
+                    manager.confirmTokenAllowance(
+                        transactionHash = "0x" + "c".repeat(64),
+                        chainId = chainId,
+                        contractAddress = usdc,
+                        spender = spender,
+                        amount = BigDecimal("250")
+                    )
+                }.exceptionOrNull()
+            }
+            // Past the first read and parked in the interval delay.
+            while (reader.receiptCalls.isEmpty()) delay(1)
+            job.cancelAndJoin()
+
+            assertThat(outcome).isInstanceOf(CancellationException::class.java)
+            assertThat(reader.receiptCalls.size)
+                .isLessThan(RainSdkManager.APPROVAL_CONFIRMATION_ATTEMPTS)
         }
 
     /** Mined, but every allowance read failed: the node's own error is the useful one, not a timeout. */

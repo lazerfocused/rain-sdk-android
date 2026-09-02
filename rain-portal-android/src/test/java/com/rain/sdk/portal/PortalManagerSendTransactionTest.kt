@@ -16,6 +16,10 @@ import io.portalhq.android.provider.data.PortalProviderRpcResponse
 import io.portalhq.android.provider.data.PortalRequestMethod
 import io.portalhq.android.provider.data.RequestOptions
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Test
@@ -39,9 +43,9 @@ class PortalManagerSendTransactionTest {
     private val submittedHash = "0x" + "a".repeat(64)
     private val minedHash = "0x" + "b".repeat(64)
 
-    private fun managerWith(portal: Portal): PortalManager {
-        // Zero retry interval: the full scan window and every retry run instantly.
-        val manager = spyk(PortalManager(retryIntervalMs = 0))
+    private fun managerWith(portal: Portal, retryIntervalMs: Long = 0): PortalManager {
+        // Zero retry interval by default: the full scan window and every retry run instantly.
+        val manager = spyk(PortalManager(retryIntervalMs = retryIntervalMs))
         every { manager.createPortal(any(), any(), any(), any(), any()) } returns portal
         manager.initialize(
             apiKey = "session-token",
@@ -160,6 +164,45 @@ class PortalManagerSendTransactionTest {
             portal.request(any(), PortalRequestMethod.eth_getLogs, any(), null as RequestOptions?)
         }
     }
+
+    /**
+     * The scan's catch blocks rethrow CancellationException before anything else. A host that
+     * cancels a send mid-scan must see the cancellation, never a TransactionPending built from it.
+     */
+    @Test
+    fun `cancelling a send mid-scan propagates the cancellation, not a pending result`(): Unit =
+        runBlocking {
+            val portal = portalForSend()
+            coEvery {
+                portal.request(any(), PortalRequestMethod.eth_getTransactionByHash, any(), null as RequestOptions?)
+            } returns rpc(null)
+            var logScans = 0
+            coEvery {
+                portal.request(any(), PortalRequestMethod.eth_getLogs, any(), null as RequestOptions?)
+            } answers {
+                logScans++
+                rpc(emptyList<Any>())
+            }
+            val manager = managerWith(portal, retryIntervalMs = 50)
+
+            var outcome: Throwable? = null
+            val job = launch {
+                outcome = runCatching {
+                    manager.sendTransaction(
+                        chainId = chainId,
+                        from = TestFixtures.WALLET_ADDRESS,
+                        to = TestFixtures.CONTRACT_ADDRESS,
+                        data = "0x095ea7b3deadbeef"
+                    )
+                }.exceptionOrNull()
+            }
+            // Past the first scan and parked in the interval delay.
+            while (logScans == 0) delay(1)
+            job.cancelAndJoin()
+
+            assertThat(outcome).isInstanceOf(CancellationException::class.java)
+            assertThat(logScans).isLessThan(20)
+        }
 
     /** The pre-submit block read has no side effects, so one failure must not switch the scan off. */
     @Test

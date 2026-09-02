@@ -104,6 +104,7 @@ internal object TestManagers {
         seedTokens: List<com.rain.sdk.models.TokenInfo> = emptyList(),
         authPullChainIds: Set<Int> = RainAuthPullChains.SANDBOX,
         authPullTokenAddresses: Map<Int, String>? = null,
+        approvalConfirmationIntervalMs: Long = RainSdkManager.APPROVAL_CONFIRMATION_INTERVAL_MS,
     ): Triple<RainSdkManager, StubWalletProvider, MockChainReader> {
         val manager = RainSdkManager(
             walletProvider = stub,
@@ -125,6 +126,7 @@ internal object TestManagers {
                     else -> TestFixtures.AUTH_PULL_USDC_ADDRESS
                 }
             },
+            approvalConfirmationIntervalMs = approvalConfirmationIntervalMs,
         )
         return Triple(manager, stub, reader)
     }
