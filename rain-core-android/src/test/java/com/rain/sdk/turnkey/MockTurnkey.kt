@@ -35,7 +35,6 @@ import com.turnkey.types.V1Result
 import com.turnkey.types.V1SignRawPayloadResult
 import com.turnkey.types.V1SolSendTransactionIntent
 import com.turnkey.types.V1SolSendTransactionResult
-import com.turnkey.types.V1SolSendTransactionResultV2
 import com.turnkey.types.V1WalletAccount
 import java.util.UUID
 
@@ -130,14 +129,14 @@ internal class MockTurnkeyClient(
         return TSolSendTransactionResponse(
             activity = MockTurnkey.makeActivity(
                 id = UUID.randomUUID().toString(),
-                from = input.signWiths.single(),
-                to = input.signWiths.single(),
+                from = input.signWith,
+                to = input.signWith,
                 caip2 = input.caip2,
                 value = null,
                 data = null,
                 sendTransactionStatusId = mockSolSendTransactionStatusId
             ),
-            result = V1SolSendTransactionResultV2(sendTransactionStatusId = mockSolSendTransactionStatusId)
+            result = V1SolSendTransactionResult(sendTransactionStatusId = mockSolSendTransactionStatusId)
         )
     }
 

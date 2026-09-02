@@ -6,16 +6,16 @@ Rain SDK for Android supports [Turnkey](https://turnkey.com) as a wallet provide
 
 - `minSdk = 28` (matches Turnkey's requirement).
 - Turnkey Kotlin SDK initialized in your `Application.onCreate()` (passkey/auth-proxy/OAuth/OTP flow completed by the host app).
-- **JDK 24+** to run unit tests that touch Turnkey types (one Turnkey artifact ships Java 24 bytecode). Production builds are unaffected; Turnkey tests skip themselves on older JDKs.
+- **JDK 24+** to run unit tests that touch Turnkey types (the Turnkey 2.0.0 AAR ships class-file major version 68 / Java 24). Production Android builds are unaffected — R8/D8 dexes Turnkey's bytecode regardless of host JVM version. The `TurnkeyWalletProviderTest` suite skips itself automatically on JDKs older than 24 via `Assume.assumeTrue`.
 
 ## Adding the dependency
 
 The Turnkey artifacts ship transitively with `rain-core-android` via `api(...)`, so consumers don't need to add them explicitly. Internally Rain pulls in:
 
 ```
-com.turnkey:sdk-kotlin:2.0.1
-com.turnkey:http:2.1.0
-com.turnkey:types:2.1.0
+com.turnkey:sdk-kotlin:2.0.0
+com.turnkey:http:2.0.0
+com.turnkey:types:2.0.0
 ```
 
 ## Architectural split

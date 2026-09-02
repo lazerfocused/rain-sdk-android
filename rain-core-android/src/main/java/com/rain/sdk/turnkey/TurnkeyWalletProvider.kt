@@ -1253,7 +1253,7 @@ internal class TurnkeyWalletProvider(
                 TSolSendTransactionBody(
                     organizationId = session.organizationId,
                     unsignedTransaction = unsigned.transactionHex,
-                    signWiths = listOf(from),
+                    signWith = from,
                     sponsor = false,
                     caip2 = SolanaChains.caip2(chainId),
                     recentBlockhash = unsigned.recentBlockhash
