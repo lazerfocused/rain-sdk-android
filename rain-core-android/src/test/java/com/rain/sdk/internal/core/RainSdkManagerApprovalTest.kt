@@ -725,8 +725,8 @@ class RainSdkManagerApprovalTest {
     fun `a raw vendor failure resolving the owner surfaces as a typed SDK error`(): Unit =
         runBlocking {
             assumeJdk24()
-            // The owner lookup happens before the confirm loop, so it must go through the mapped
-            // accessor: a raw provider exception must never escape a @Throws(RainError) API.
+            // The owner lookup runs before the confirm loop; a raw provider exception there must
+            // still surface mapped, never escape a @Throws(RainError) API.
             val failing = object : StubWalletProvider() {
                 override suspend fun getWalletAddress(): String {
                     throw RuntimeException("session store unavailable")
