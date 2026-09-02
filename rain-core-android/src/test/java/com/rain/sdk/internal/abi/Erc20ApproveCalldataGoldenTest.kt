@@ -134,9 +134,9 @@ class Erc20ApproveCalldataGoldenTest {
         )
     }
 
+    /** The approve selector is pinned above through the real encoder output; only this one is a literal. */
     @Test
-    fun `the ERC-20 approval and allowance selectors are pinned`() {
-        assertThat(ERC20Selectors.APPROVE).isEqualTo("095ea7b3")
+    fun `the ERC-20 allowance selector is pinned`() {
         assertThat(ERC20Selectors.ALLOWANCE).isEqualTo("dd62ed3e")
     }
 

@@ -19,7 +19,4 @@ internal object ERC20Selectors {
 
     /** `allowance(address,address)` */
     const val ALLOWANCE = "dd62ed3e"
-
-    /** `approve(address,uint256)` */
-    const val APPROVE = "095ea7b3"
 }
