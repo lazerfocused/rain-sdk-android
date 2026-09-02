@@ -407,7 +407,7 @@ class TurnkeySolanaProviderTest {
         assertThat(client.ethSendTransactionCalls).isEmpty()
         assertThat(client.solSendTransactionCalls).hasSize(1)
         val body = client.solSendTransactionCalls.single()
-        assertThat(body.signWith).isEqualTo(MockTurnkey.DEFAULT_SOLANA_ADDRESS)
+        assertThat(body.signWiths).containsExactly(MockTurnkey.DEFAULT_SOLANA_ADDRESS)
         assertThat(body.caip2).isEqualTo(devnetCaip2)
         assertThat(body.recentBlockhash).isEqualTo(blockhash)
         assertThat(body.sponsor).isEqualTo(false)
@@ -925,7 +925,7 @@ class TurnkeySolanaProviderTest {
         assertThat(result).isEqualTo(SIGNATURE)
         val body = client.solSendTransactionCalls.single()
         assertThat(body.caip2).isEqualTo(devnetCaip2)
-        assertThat(body.signWith).isEqualTo(MockTurnkey.DEFAULT_SOLANA_ADDRESS)
+        assertThat(body.signWiths).containsExactly(MockTurnkey.DEFAULT_SOLANA_ADDRESS)
 
         // One instruction (the transfer) — no account creation, since the recipient has one.
         val instructions = decodeInstructions(body.unsignedTransaction)
