@@ -174,6 +174,13 @@ class RainAuthPullConfigTest {
         assertThat(error.message).contains("zero address")
     }
 
+    /** Address validation is 0x-optional, so the zero check must be too. */
+    @Test
+    fun `the prefix-less zero address is rejected as the operator`() {
+        val error = buildCustom(customConfig(operatorAddress = zeroAddress.removePrefix("0x")))
+        assertThat(error.message).contains("zero address")
+    }
+
     @Test
     fun `a custom config must name at least one token contract`() {
         val error = buildCustom(customConfig(tokenAddresses = emptyMap()))
@@ -198,6 +205,14 @@ class RainAuthPullConfigTest {
     @Test
     fun `the zero address is rejected as a token contract`() {
         val error = buildCustom(customConfig(tokenAddresses = mapOf(RainChain.BASE_SEPOLIA to zeroAddress)))
+        assertThat(error.message).contains("token contract")
+    }
+
+    @Test
+    fun `the prefix-less zero address is rejected as a token contract`() {
+        val error = buildCustom(
+            customConfig(tokenAddresses = mapOf(RainChain.BASE_SEPOLIA to zeroAddress.removePrefix("0x")))
+        )
         assertThat(error.message).contains("token contract")
     }
 

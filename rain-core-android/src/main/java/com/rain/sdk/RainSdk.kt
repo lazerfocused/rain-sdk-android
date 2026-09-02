@@ -13,6 +13,7 @@ import com.rain.sdk.internal.network.rainapi.RainApiService
 import com.rain.sdk.internal.solana.SolanaSupport
 import com.rain.sdk.internal.tokenstore.TokenMetadataStore
 import com.rain.sdk.internal.utils.isValidEthereumAddress
+import com.rain.sdk.internal.utils.isZeroAddress
 import com.rain.sdk.models.RainAdminSignature
 import com.rain.sdk.models.RainEIP712Message
 import com.rain.sdk.models.RainApiEnvironment
@@ -492,7 +493,7 @@ class RainSdk private constructor(
             if (!config.operatorAddress.isValidEthereumAddress) {
                 throw RainError.InvalidConfig("Invalid Auth Pull operator: ${config.operatorAddress}")
             }
-            if (config.operatorAddress.equals(ZERO_ADDRESS, ignoreCase = true)) {
+            if (config.operatorAddress.isZeroAddress) {
                 throw RainError.InvalidConfig("Auth Pull operator must not be the zero address")
             }
             if (config.tokenAddresses.isEmpty()) {
@@ -522,7 +523,7 @@ class RainSdk private constructor(
                 )
             }
             config.tokenAddresses.forEach { (chainId, address) ->
-                if (!address.isValidEthereumAddress || address.equals(ZERO_ADDRESS, ignoreCase = true)) {
+                if (!address.isValidEthereumAddress || address.isZeroAddress) {
                     throw RainError.InvalidConfig(
                         "Invalid Auth Pull token contract for chainId=$chainId: $address"
                     )
@@ -533,10 +534,6 @@ class RainSdk private constructor(
                     "No RPC endpoint configured for any trusted Auth Pull chain"
                 )
             }
-        }
-
-        private companion object {
-            const val ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
         }
     }
 }
