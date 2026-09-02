@@ -464,8 +464,9 @@ interface RainClient {
     /**
      * Reads the ERC-20 allowance [spender] currently holds over [owner]'s balance.
      *
-     * Call it before approving (to skip a redundant transaction) and after (to confirm the
-     * approval was mined).
+     * Call it before approving (to skip a redundant transaction). To confirm an approval was
+     * mined, use [confirmTokenAllowance], this read is unpinned and can still return the
+     * pre-approval value right after submitting.
      *
      * @param owner The wallet whose balance is approved. `null` (the default) reads this client's
      *              own wallet.
@@ -508,7 +509,9 @@ interface RainClient {
      * @throws RainError.TransactionPending when the transaction has not mined by the end of the
      *   poll window. Not a failure: `statusId` carries [transactionHash]; re-read the allowance or
      *   confirm again rather than re-approving.
-     * @throws RainError.InternalError when the mined allowance contradicts the request.
+     * @throws RainError.InternalError when the mined allowance contradicts the request. An Auth
+     *   Pull `transferFrom` mined later in the same block also reads back lower and surfaces here;
+     *   re-read with [getTokenAllowance] before treating it as a failed approval.
      */
     @Throws(RainError::class)
     suspend fun confirmTokenAllowance(

@@ -626,11 +626,14 @@ internal class RainSdkManager(
    * Checks the allowance a mined approval actually left behind, read at the block it mined in.
    *
    * Pinning the read to that block is what makes the comparison exact: `approve` sets the value
-   * outright and nothing after that block can move what it reads. Anything but the requested
-   * amount therefore means the approval did not do what was asked — a revoke that left a
-   * spendable allowance, an approval that mined against nothing (the shape a wrong owner, token,
-   * or spender produces), or one that reverted inside a bundle whose transaction as a whole
+   * outright and later blocks cannot move what it reads. Anything but the requested amount
+   * therefore means the approval did not do what was asked — a revoke that left a spendable
+   * allowance, an approval that mined against nothing (the shape a wrong owner, token, or
+   * spender produces), or one that reverted inside a bundle whose transaction as a whole
    * succeeded: below when it was raising the allowance, above when it was lowering it.
+   *
+   * One edge: the read sees end-of-block state, so an Auth Pull `transferFrom` mined later in the
+   * same block also reads back lower and is reported here as a mismatch.
    */
   private fun verifyConfirmedAllowance(allowance: RainTokenAllowance, expectedRaw: BigInteger) {
     if (expectedRaw.signum() == 0) {

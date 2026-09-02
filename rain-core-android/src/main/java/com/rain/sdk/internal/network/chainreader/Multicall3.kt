@@ -32,7 +32,7 @@ internal object Multicall3 {
 
     /** One entry in an `aggregate3` batch. */
     data class Call3(
-        /** Target contract address (the token contract for `balanceOf`, or `CANONICAL_ADDRESS` for `getEthBalance`). */
+        /** Target contract address (the token contract for `balanceOf`, or the chain's Multicall3 deployment for `getEthBalance`). */
         val target: String,
         /** If true, a revert in this individual call doesn't fail the whole batch. */
         val allowFailure: Boolean,

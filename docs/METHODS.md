@@ -188,7 +188,10 @@ vendor-shaped details are worth knowing:
   `PortalEvents.PortalSigningRequested` with `PortalSigningApproved` while it is on. Every Rain call
   that signs is already an explicit, user-initiated SDK call and Portal raises no approval UI of its
   own, so an unanswered signing request simply hangs. Pass `false` only if the host gates signing
-  itself, and then answer the event on the `Portal` instance handed to `onPortalCreated`.
+  itself, and then answer the event on the `Portal` instance handed to `onPortalCreated`. The
+  handler is registered on the `Portal` instance itself, so while `autoApprove` is on every signing
+  request on that instance is auto-approved, including ones the host makes directly through the
+  `onPortalCreated` instance.
 - **`chainId`.** `PortalConfig.chainId` feeds portal-android's **required** `legacyEthChainId`
   constructor parameter, so the adapter must supply one; the field lets the host pick it instead of
   guessing. Omit it and the adapter falls back to Avalanche mainnet when configured, else the first
@@ -456,7 +459,8 @@ clones) revert unless an existing non-zero allowance is set to zero first — se
 ### getTokenAllowance(chainId, contractAddress, spender, owner?)
 
 Reads the ERC-20 allowance `spender` currently holds over `owner`'s balance. Call it before
-approving (to skip a redundant transaction) and after (to confirm the approval was mined).
+approving (to skip a redundant transaction). To confirm an approval was mined, use
+`confirmTokenAllowance`, this read is unpinned and can still return the pre-approval value.
 
 - **Returns:** `RainTokenAllowance` — see [RainTokenAllowance value type](#raintokenallowance-value-type).
 - **Throws:** `RainError`. EVM only, and gated to the configured environment's Auth Pull chains like
@@ -514,12 +518,13 @@ through the same path as `getTokenAllowance`, pinned to the block the transactio
 | `owner` | `String?` | Wallet whose allowance to read. `null` (the default) reads this client's own wallet. |
 
 **The returned allowance must equal `amount`.** The read is pinned to the block the approval mined
-in, and `approve` sets the value outright, so nothing after that block can move what is read back.
-Anything but the requested amount means the approval did not do what was asked — below when it was
-raising the allowance, above when it was lowering it, still zero when it mined against the wrong
-owner, token, or spender, or non-zero after a revoke — and throws `InternalError` (`RAIN_502`). A
-value that comes back is therefore the requested one; there is nothing to compare. Later pulls do
-decrement the live allowance, so use `getTokenAllowance` (and `covers`) for the ongoing check.
+in, so later blocks cannot move what is read back. Anything but the requested amount means the
+approval did not do what was asked — below when it was raising the allowance, above when it was
+lowering it, still zero when it mined against the wrong owner, token, or spender, or non-zero after
+a revoke — and throws `InternalError` (`RAIN_502`). One edge: an Auth Pull `transferFrom` mined in
+the *same block* as the approval also reads back lower and surfaces as `RAIN_502`; re-read with
+`getTokenAllowance` before treating that as a failed approval. Later pulls decrement the live
+allowance, so use `getTokenAllowance` (and `covers`) for the ongoing check.
 
 ```kotlin
 val result = client.approveTokenAllowance(RainChain.BASE_SEPOLIA, usdc, rainOperator)

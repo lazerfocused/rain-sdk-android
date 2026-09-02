@@ -8,8 +8,11 @@ package com.rain.sdk.models
  * richer metadata (status, included block, fee paid) without breaking the call shape.
  *
  * @property transactionHash The on-chain transaction hash of the `approve` call. The approval is
- *   only in effect once that transaction is mined; read the allowance back with
- *   [com.rain.sdk.interfaces.RainClient.getTokenAllowance] to confirm.
+ *   only in effect once that transaction is mined; pass this hash to
+ *   [com.rain.sdk.interfaces.RainClient.confirmTokenAllowance], which waits for the receipt and
+ *   verifies the allowance at the mined block. An immediate
+ *   [com.rain.sdk.interfaces.RainClient.getTokenAllowance] read is unpinned and can still return
+ *   the pre-approval value.
  */
 data class RainTokenApprovalResult(
     val transactionHash: String

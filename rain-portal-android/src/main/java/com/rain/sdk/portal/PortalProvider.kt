@@ -31,6 +31,9 @@ import kotlinx.coroutines.flow.StateFlow
  *                    gates signing itself — it must then handle
  *                    `PortalEvents.PortalSigningRequested` and emit `PortalSigningApproved` on the
  *                    Portal instance from `onPortalCreated`, or every signature hangs unanswered.
+ *                    Heads-up: the handler is registered on the Portal instance itself, so while
+ *                    this is `true` every signing request on that instance is auto-approved —
+ *                    including ones the host makes directly through the `onPortalCreated` instance.
  *                    Last so existing positional callers keep compiling.
  */
 class PortalConfig(
