@@ -585,17 +585,26 @@ internal class PortalManager(
     hash: String,
     fromBlock: BigInteger?
   ): String {
+    // A lookup that keeps failing looks the same as "not mined yet" from the outside; keep the
+    // last failure so the terminal log says which it was.
+    var lastLookupFailure: Exception? = null
+    val recordFailure = { e: Exception -> lastLookupFailure = e }
+
     // Without a lower bound there is nothing to scan; only hand the hash on if a node knows it.
     if (fromBlock == null) {
-      if (isKnownTransaction(portal, chainId, hash)) return hash
-      Timber.w("Rain SDK: %s could not be verified as a transaction hash (block read failed)", hash)
+      if (isKnownTransaction(portal, chainId, hash, recordFailure)) return hash
+      Timber.w(
+        lastLookupFailure,
+        "Rain SDK: %s could not be verified as a transaction hash (block read failed)",
+        hash
+      )
       throw RainError.TransactionPending(hash)
     }
 
     repeat(UserOperationLookup.ATTEMPTS) { attempt ->
-      if (isKnownTransaction(portal, chainId, hash)) return hash
+      if (isKnownTransaction(portal, chainId, hash, recordFailure)) return hash
 
-      val event = userOperationEvent(portal, chainId, hash, fromBlock)
+      val event = userOperationEvent(portal, chainId, hash, fromBlock, recordFailure)
       if (event != null) {
         val (transactionHash, succeeded) = event
         if (!succeeded) {
@@ -616,12 +625,21 @@ internal class PortalManager(
     // is pending, not failure — and the UserOperation hash is what the host resumes from. Handing
     // it on as a transaction hash would send the caller's receipt poll after something no node
     // can ever answer for.
-    Timber.w("Rain SDK: %s did not resolve to a mined transaction within the scan window", hash)
+    Timber.w(
+      lastLookupFailure,
+      "Rain SDK: %s did not resolve to a mined transaction within the scan window",
+      hash
+    )
     throw RainError.TransactionPending(hash)
   }
 
   /** Whether the chain knows this hash as a transaction, mined or pending. */
-  private suspend fun isKnownTransaction(portal: Portal, chainId: String, hash: String): Boolean {
+  private suspend fun isKnownTransaction(
+    portal: Portal,
+    chainId: String,
+    hash: String,
+    onFailure: (Exception) -> Unit
+  ): Boolean {
     val response = try {
       portal.request(
         chainId = chainId,
@@ -630,6 +648,8 @@ internal class PortalManager(
       )
     } catch (e: Exception) {
       if (e is CancellationException) throw e
+      Timber.w(e, "Rain SDK: eth_getTransactionByHash failed during UserOperation resolution")
+      onFailure(e)
       return false
     }
     return (response.result as? PortalProviderRpcResponse)?.result != null
@@ -640,7 +660,8 @@ internal class PortalManager(
     portal: Portal,
     chainId: String,
     hash: String,
-    fromBlock: BigInteger
+    fromBlock: BigInteger,
+    onFailure: (Exception) -> Unit
   ): Pair<String, Boolean>? {
     val filter = mapOf(
       "fromBlock" to "0x" + fromBlock.toString(16),
@@ -657,6 +678,8 @@ internal class PortalManager(
       )
     } catch (e: Exception) {
       if (e is CancellationException) throw e
+      Timber.w(e, "Rain SDK: eth_getLogs failed during UserOperation resolution")
+      onFailure(e)
       return null
     }
     val logs = (response.result as? PortalProviderRpcResponse)?.result as? List<*> ?: return null

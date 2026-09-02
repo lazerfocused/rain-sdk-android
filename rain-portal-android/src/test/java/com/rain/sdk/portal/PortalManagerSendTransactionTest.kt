@@ -138,6 +138,29 @@ class PortalManagerSendTransactionTest {
         }
     }
 
+    /**
+     * A lookup that fails every time is indistinguishable from "not mined yet" to the caller, and
+     * must end the same way: pending with the hash, after the whole window, never a raw throw.
+     */
+    @Test
+    fun `lookups that keep failing still end as pending after the full window`() {
+        val portal = portalForSend()
+        coEvery {
+            portal.request(any(), PortalRequestMethod.eth_getTransactionByHash, any(), null as RequestOptions?)
+        } throws IOException("connection reset")
+        coEvery {
+            portal.request(any(), PortalRequestMethod.eth_getLogs, any(), null as RequestOptions?)
+        } throws IOException("connection reset")
+
+        val error = runCatching { send(managerWith(portal)) }.exceptionOrNull()
+
+        assertThat(error).isInstanceOf(RainError.TransactionPending::class.java)
+        assertThat((error as RainError.TransactionPending).statusId).isEqualTo(submittedHash)
+        coVerify(exactly = 20) {
+            portal.request(any(), PortalRequestMethod.eth_getLogs, any(), null as RequestOptions?)
+        }
+    }
+
     /** The pre-submit block read has no side effects, so one failure must not switch the scan off. */
     @Test
     fun `a failed block-number read is retried before the scan is given up`() {
