@@ -193,6 +193,13 @@ class PortalProviderSessionTest {
         val fresh = mockk<Portal>(relaxed = true)
         coEvery { fresh.request(any(), any(), any(), null as io.portalhq.android.provider.data.RequestOptions?) } returns
             io.portalhq.android.provider.data.PortalProviderResult(id = "1", result = "0xhash")
+        // The chain must know the hash: an unverifiable one is pending, not returned.
+        coEvery {
+            fresh.request(any(), PortalRequestMethod.eth_getTransactionByHash, any(), null as io.portalhq.android.provider.data.RequestOptions?)
+        } returns io.portalhq.android.provider.data.PortalProviderResult(
+            id = "1",
+            result = io.portalhq.android.provider.data.PortalProviderRpcResponse(jsonrpc = "2.0", result = mapOf("hash" to "0xhash"))
+        )
         val manager = managerBackedBy(mapOf("dead" to dead, "fresh" to fresh))
         val provider = PortalProvider(
             config = PortalConfig(sessionToken = "dead", onSessionTokenNeeded = { "fresh" }),

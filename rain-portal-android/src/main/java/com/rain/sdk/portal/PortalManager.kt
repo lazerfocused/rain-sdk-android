@@ -585,8 +585,12 @@ internal class PortalManager(
     hash: String,
     fromBlock: BigInteger?
   ): String {
-    // Without a lower bound there is nothing to scan, so Portal's hash is all this can offer.
-    if (fromBlock == null) return hash
+    // Without a lower bound there is nothing to scan; only hand the hash on if a node knows it.
+    if (fromBlock == null) {
+      if (isKnownTransaction(portal, chainId, hash)) return hash
+      Timber.w("Rain SDK: %s could not be verified as a transaction hash (block read failed)", hash)
+      throw RainError.TransactionPending(hash)
+    }
 
     repeat(UserOperationLookup.ATTEMPTS) { attempt ->
       if (isKnownTransaction(portal, chainId, hash)) return hash

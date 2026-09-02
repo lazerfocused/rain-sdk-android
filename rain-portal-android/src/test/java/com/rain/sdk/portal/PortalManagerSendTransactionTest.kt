@@ -157,12 +157,11 @@ class PortalManagerSendTransactionTest {
     }
 
     /**
-     * Retries exhausted: there is no lower bound to scan from, so the adapter hands Portal's hash
-     * on as-is rather than spending the window on a scan it cannot run. Documented fallback; a
-     * UserOperation hash then surfaces from the caller's own confirmation as TransactionPending.
+     * Retries exhausted: there is no lower bound to scan from, but a hash the chain already knows
+     * needs no scan, so a plain transaction still goes through.
      */
     @Test
-    fun `when every block-number read fails the send returns Portal's hash without scanning`() {
+    fun `when every block-number read fails a hash the chain knows is still returned`() {
         val portal = portalForSend()
         var blockNumberCalls = 0
         coEvery {
@@ -171,9 +170,56 @@ class PortalManagerSendTransactionTest {
             blockNumberCalls++
             throw IOException("connection reset")
         }
+        coEvery {
+            portal.request(any(), PortalRequestMethod.eth_getTransactionByHash, any(), null as RequestOptions?)
+        } returns rpc(mapOf("hash" to submittedHash))
 
         assertThat(send(managerWith(portal))).isEqualTo(submittedHash)
         assertThat(blockNumberCalls).isEqualTo(3)
+        coVerify(exactly = 0) {
+            portal.request(any(), PortalRequestMethod.eth_getLogs, any(), null as RequestOptions?)
+        }
+    }
+
+    /**
+     * Retries exhausted and the chain does not know the hash: on an AA chain that is a
+     * UserOperation hash, and handing it on would burn the caller's receipt window against
+     * something no node can answer for. Same outcome as the scan window expiring.
+     */
+    @Test
+    fun `when every block-number read fails an unknown hash is pending, not handed on`() {
+        val portal = portalForSend()
+        coEvery {
+            portal.request(any(), PortalRequestMethod.eth_blockNumber, any(), null as RequestOptions?)
+        } throws IOException("connection reset")
+        coEvery {
+            portal.request(any(), PortalRequestMethod.eth_getTransactionByHash, any(), null as RequestOptions?)
+        } returns rpc(null)
+
+        val error = runCatching { send(managerWith(portal)) }.exceptionOrNull()
+
+        assertThat(error).isInstanceOf(RainError.TransactionPending::class.java)
+        assertThat((error as RainError.TransactionPending).statusId).isEqualTo(submittedHash)
+        coVerify(exactly = 0) {
+            portal.request(any(), PortalRequestMethod.eth_getLogs, any(), null as RequestOptions?)
+        }
+    }
+
+    /** A block-number response that does not parse leaves no lower bound either, and ends the same way. */
+    @Test
+    fun `an unparseable block-number response is treated like a failed read`() {
+        val portal = portalForSend()
+        coEvery {
+            portal.request(any(), PortalRequestMethod.eth_blockNumber, any(), null as RequestOptions?)
+        } returns rpc("not-a-block")
+        coEvery {
+            portal.request(any(), PortalRequestMethod.eth_getTransactionByHash, any(), null as RequestOptions?)
+        } returns rpc(null)
+
+        val error = runCatching { send(managerWith(portal)) }.exceptionOrNull()
+
+        assertThat(error).isInstanceOf(RainError.TransactionPending::class.java)
+        assertThat((error as RainError.TransactionPending).statusId).isEqualTo(submittedHash)
         coVerify(exactly = 0) {
             portal.request(any(), PortalRequestMethod.eth_getLogs, any(), null as RequestOptions?)
         }

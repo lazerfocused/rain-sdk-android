@@ -301,7 +301,9 @@ flag is false throws `TransactionSimulationFailed`.
 
 If the window expires, hosts get `TransactionPending` (`RAIN_303`) with `statusId` = the
 UserOperation hash. The bundler has it and it will most likely still mine: don't re-approve; re-read
-with `getTokenAllowance`. Chains without account abstraction resolve on the first check.
+with `getTokenAllowance`. Chains without account abstraction resolve on the first check. If the
+block read itself fails there is nothing to scan from: a hash the chain already knows is returned,
+anything else is `TransactionPending` straight away rather than a hash no node can answer for.
 
 ## Not covered
 
