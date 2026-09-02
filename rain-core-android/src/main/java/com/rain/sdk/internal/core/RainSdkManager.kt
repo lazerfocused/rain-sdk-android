@@ -520,7 +520,7 @@ internal class RainSdkManager(
     // Resolved up front: these fail on configuration, not timing, so retrying them changes nothing.
     val expectedRaw = approvalBaseUnits(chainId, contractAddress, amount)
     val resolvedDecimals = requireDecimals(chainId, contractAddress)
-    val resolvedOwner = owner ?: walletProvider.getWalletAddress()
+    val resolvedOwner = owner ?: getWalletAddress()
     if (!resolvedOwner.isValidEthereumAddress) {
       throw RainError.InvalidConfig("Invalid owner address: $resolvedOwner")
     }

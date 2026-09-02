@@ -8,6 +8,7 @@ import com.rain.sdk.internal.helpers.MockChainReader
 import com.rain.sdk.internal.helpers.StubWalletProvider
 import com.rain.sdk.internal.helpers.TestFixtures
 import com.rain.sdk.internal.helpers.TestManagers
+import com.rain.sdk.internal.helpers.assumeJdk24
 import com.rain.sdk.models.RainTokenAllowance
 import com.rain.sdk.models.TokenInfo
 import java.io.IOException
@@ -719,6 +720,36 @@ class RainSdkManagerApprovalTest {
         assertThat(reader.receiptCalls).hasSize(2)
         assertThat(reader.allowanceCalls).hasSize(1)
     }
+
+    @Test
+    fun `a raw vendor failure resolving the owner surfaces as a typed SDK error`(): Unit =
+        runBlocking {
+            assumeJdk24()
+            // The owner lookup happens before the confirm loop, so it must go through the mapped
+            // accessor: a raw provider exception must never escape a @Throws(RainError) API.
+            val failing = object : StubWalletProvider() {
+                override suspend fun getWalletAddress(): String {
+                    throw RuntimeException("session store unavailable")
+                }
+            }
+            val (manager, _, _) = TestManagers.approvalManager(
+                stub = failing,
+                reader = MockChainReader(receiptStatus = true),
+                seedTokens = listOf(usdcInfo())
+            )
+
+            val ex = runCatching {
+                manager.confirmTokenAllowance(
+                    transactionHash = "0x" + "2".repeat(64),
+                    chainId = chainId,
+                    contractAddress = usdc,
+                    spender = spender,
+                    amount = BigDecimal("250")
+                )
+            }.exceptionOrNull()
+
+            assertThat(ex).isInstanceOf(RainError.ProviderError::class.java)
+        }
 
     // ---- confirmation survives node blips and reports the right thing on timeout -------
 
