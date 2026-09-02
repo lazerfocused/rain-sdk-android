@@ -56,8 +56,15 @@ object Erc20Abi {
      *
      * [allowanceBaseUnits] is in the token's base units; `uint256` max encodes an unlimited
      * allowance and `0` revokes.
+     *
+     * @throws RainError.InvalidRecipient if [spender] is not a well-formed EVM address — web3j's
+     *         [Address] would otherwise left-zero-pad a short one into a wrong-but-legal spender
+     *         inside opaque calldata.
      */
     fun encodeApprove(spender: String, allowanceBaseUnits: BigInteger): String {
+        if (!RainHexUtils.isValidAddress(spender)) {
+            throw RainError.InvalidRecipient(spender, "not a valid EVM address")
+        }
         if (allowanceBaseUnits.signum() < 0 || allowanceBaseUnits > MAX_UINT256) {
             throw RainError.InvalidAmount(
                 amount = allowanceBaseUnits.toString(),

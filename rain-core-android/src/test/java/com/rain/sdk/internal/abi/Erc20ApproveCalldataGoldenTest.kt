@@ -91,6 +91,40 @@ class Erc20ApproveCalldataGoldenTest {
         assertThat(ex.errorCode.code).isEqualTo("RAIN_406")
     }
 
+    /**
+     * web3j's Address left-zero-pads a short hex string, so an unguarded truncated spender would
+     * encode as a different-but-legal address. Erc20Abi is public for the adapter modules, so
+     * the manager's own validation does not cover every caller.
+     */
+    @Test
+    fun `a truncated spender is rejected instead of zero-padded`() {
+        val ex = assertThrows(RainError.InvalidRecipient::class.java) {
+            Erc20Abi.encodeApprove("0x5a6E6b0d", BigInteger.valueOf(250_000_000))
+        }
+        assertThat(ex.address).isEqualTo("0x5a6E6b0d")
+    }
+
+    @Test
+    fun `an over-long spender is rejected as a typed error`() {
+        assertThrows(RainError.InvalidRecipient::class.java) {
+            Erc20Abi.encodeApprove(spender + "00", BigInteger.ONE)
+        }
+    }
+
+    @Test
+    fun `a non-hex spender is rejected`() {
+        assertThrows(RainError.InvalidRecipient::class.java) {
+            Erc20Abi.encodeApprove(spender.dropLast(1) + "z", BigInteger.ONE)
+        }
+    }
+
+    @Test
+    fun `the decimal overload applies the same spender guard`() {
+        assertThrows(RainError.InvalidRecipient::class.java) {
+            Erc20Abi.encodeApprove("0x5a6E6b0d", BigDecimal("1.5"), 6)
+        }
+    }
+
     @Test
     fun `unlimitedRawAmount is exactly uint256 max`() {
         assertThat(RainTokenAllowance.UNLIMITED_RAW_AMOUNT)
