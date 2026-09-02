@@ -513,10 +513,13 @@ through the same path as `getTokenAllowance`, pinned to the block the transactio
 | `amount` | `BigDecimal?` | The allowance that was requested, so the result can be checked against it. `null` (the default) means the unlimited approval; `BigDecimal.ZERO` means a revoke. |
 | `owner` | `String?` | Wallet whose allowance to read. `null` (the default) reads this client's own wallet. |
 
-**The returned allowance can be lower than `amount`.** Auth Pull spends this allowance, and USDC
-decrements it on every `transferFrom` — including a `uint256` max one. An authorization that pulls
-between the receipt and the read leaves less than was approved, and that is a success. Compare
-`rawAmount` (or `covers`) against what you still need, not against what you asked for.
+**The returned allowance must equal `amount`.** The read is pinned to the block the approval mined
+in, and `approve` sets the value outright, so nothing after that block can move what is read back.
+Anything but the requested amount means the approval did not do what was asked — below when it was
+raising the allowance, above when it was lowering it, still zero when it mined against the wrong
+owner, token, or spender, or non-zero after a revoke — and throws `InternalError` (`RAIN_502`). A
+value that comes back is therefore the requested one; there is nothing to compare. Later pulls do
+decrement the live allowance, so use `getTokenAllowance` (and `covers`) for the ongoing check.
 
 ```kotlin
 val result = client.approveTokenAllowance(RainChain.BASE_SEPOLIA, usdc, rainOperator)
