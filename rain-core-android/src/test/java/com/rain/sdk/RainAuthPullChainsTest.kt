@@ -2,7 +2,7 @@ package com.rain.sdk
 
 import com.google.common.truth.Truth.assertThat
 import com.rain.sdk.internal.constants.TokenRegistry
-import com.rain.sdk.internal.network.chainreader.CANONICALLY_DEPLOYED_CHAIN_IDS
+import com.rain.sdk.internal.network.chainreader.multicall3Address
 import com.rain.sdk.models.RainApiEnvironment
 import org.junit.Test
 
@@ -67,9 +67,10 @@ class RainAuthPullChainsTest {
 
     /** Allowance reads batch through Multicall3 where it is deployed; all four qualify. */
     @Test
-    fun `every Auth Pull chain has a canonical Multicall3 deployment`() {
-        assertThat(CANONICALLY_DEPLOYED_CHAIN_IDS)
-            .containsAtLeastElementsIn(RainAuthPullChains.SANDBOX + RainAuthPullChains.PRODUCTION)
+    fun `every Auth Pull chain has a Multicall3 deployment`() {
+        for (chainId in RainAuthPullChains.SANDBOX + RainAuthPullChains.PRODUCTION) {
+            assertThat(multicall3Address(chainId)).isNotNull()
+        }
     }
 
     /** ERC-20 approvals are EVM-only, so no Solana sentinel may leak into either set. */

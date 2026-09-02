@@ -156,7 +156,8 @@ val balances: List<Balance> = client.getTokenBalances(chainId = 43114)
 // Every configured chain, flattened into one list — each Balance carries its own chainId
 val all: List<Balance> = client.getAllBalances()
 
-// Optionally register extra tokens so their metadata resolves without an on-chain lookup
+// Optionally register extra tokens so their metadata resolves without an on-chain lookup.
+// Built-in tokens are trusted: a registration for an address the SDK already ships is ignored.
 client.registerTokens(
     listOf(TokenInfo(chainId = 43114, address = "0x...", symbol = "FOO", decimals = 18))
 )

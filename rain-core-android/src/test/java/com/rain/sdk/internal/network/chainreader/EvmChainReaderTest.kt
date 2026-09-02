@@ -86,7 +86,7 @@ class EvmChainReaderTest {
 
     @Test
     fun `getBalances on a non-Multicall3 chain fans out one balanceOf per token`() = runBlocking {
-        // Use a chain not in CANONICALLY_DEPLOYED_CHAIN_IDS so the parallel fallback runs.
+        // Use a chain not in MULTICALL3_DEPLOYMENTS so the parallel fallback runs.
         val chainId = 43113 // Avalanche Fuji testnet
         rpc.stub("eth_getBalance", "0x0") // native = 0
         // 0xf4240 = 1_000_000 → exact raw. Both tokens share the same stubbed eth_call
@@ -197,6 +197,34 @@ class EvmChainReaderTest {
             .isEqualTo(BigInteger("1000000000000000000"))
         assertThat(balances.single { it.token == Token.Contract(usdc) }.rawAmount)
             .isEqualTo(BigInteger("1000000"))
+    }
+
+    /** The canonical address has no code on zkSync Era; batching there must go to its own deployment. */
+    @Test
+    fun `getBalances on zkSync Era targets the zkSync Multicall3 address, not the canonical one`() = runBlocking {
+        fun slot(v: String) = "0".repeat(64 - v.length) + v
+        rpc.stub(
+            "eth_call",
+            "0x" +
+                slot("20") +              // outer offset
+                slot("1") +               // count = 1
+                slot("20") +              // offset to tuple 0
+                slot("1") +               // t0 success
+                slot("40") +              // t0 returnData offset
+                slot("20") +              // t0 returnData length
+                slot("de0b6b3a7640000")   // t0 = 1 ETH in wei
+        )
+        val zkSyncEra = 324
+        val reader = makeReader(chainId = zkSyncEra)
+
+        val balances = reader.getBalances(chainId = zkSyncEra, walletAddress = wallet, tokens = emptyList())
+
+        assertThat(balances).hasSize(1)
+        assertThat(rpc.recordedMethods).containsExactly("eth_call")
+        val body = rpc.recordedBodies.single()
+        // The checksummed form only appears in the `to` field; calldata targets are lowercase hex.
+        assertThat(body).contains(Multicall3.ZKSYNC_ERA_ADDRESS)
+        assertThat(body).doesNotContain(Multicall3.CANONICAL_ADDRESS)
     }
 
     @Test

@@ -20,7 +20,7 @@ import com.rain.sdk.models.TokenInfo
  *
  * Multicall3 status:
  * Chains where Multicall3 is deployed at the canonical address are listed in
- * `Multicall3.CANONICALLY_DEPLOYED_CHAIN_IDS` — those use the batched `aggregate3` path.
+ * `MULTICALL3_DEPLOYMENTS` — those use the batched `aggregate3` path.
  * Any chain not in that set uses the parallel `eth_call` fallback.
  */
 internal object TokenRegistry {

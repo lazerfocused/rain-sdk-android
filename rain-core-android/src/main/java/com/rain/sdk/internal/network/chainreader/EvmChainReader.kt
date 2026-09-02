@@ -22,10 +22,11 @@ import java.math.BigInteger
  *
  * Primary path — Multicall3 (`aggregate3`) for batched balance reads, so a wallet holding
  * N tokens on a chain costs one RPC round-trip regardless of N. Used when
- * [isMulticall3CanonicallyDeployed] returns true for the target chain.
+ * [multicall3Address] knows a deployment for the target chain (zkSync Era is at a
+ * non-canonical address).
  *
  * Fallback — parallel `eth_call` (`balanceOf`) and `eth_getBalance`, used on chains outside
- * the canonical deployment list.
+ * the deployment map.
  *
  * Native balance failures are fatal — they indicate a chain-wide problem (bad RPC, wrong
  * chain ID). Per-token failures (a single `balanceOf` reverts) are logged via Timber and
@@ -101,8 +102,9 @@ internal class EvmChainReader(
         malformed.forEach {
             Timber.w("Rain SDK: skipping token with malformed address ${it.address} on chainId=$chainId")
         }
-        return if (isMulticall3CanonicallyDeployed(chainId)) {
-            fetchViaMulticall3(rpcUrl, chainId, walletAddress, valid)
+        val multicallAddress = multicall3Address(chainId)
+        return if (multicallAddress != null) {
+            fetchViaMulticall3(rpcUrl, chainId, multicallAddress, walletAddress, valid)
         } else {
             fetchViaParallelCalls(rpcUrl, chainId, walletAddress, valid)
         }
@@ -246,6 +248,7 @@ internal class EvmChainReader(
     private suspend fun fetchViaMulticall3(
         rpcUrl: String,
         chainId: Int,
+        multicallAddress: String,
         walletAddress: String,
         tokens: List<TokenInfo>
     ): List<Balance> {
@@ -254,7 +257,7 @@ internal class EvmChainReader(
         val calls = buildList {
             add(
                 Multicall3.Call3(
-                    target = Multicall3.CANONICAL_ADDRESS,
+                    target = multicallAddress,
                     allowFailure = true,
                     callData = Multicall3.encodeGetEthBalance(walletAddress)
                 )
@@ -271,7 +274,7 @@ internal class EvmChainReader(
         }
 
         val aggregateCallData = Multicall3.encodeAggregate3(calls)
-        val callParams = mapOf("to" to Multicall3.CANONICAL_ADDRESS, "data" to aggregateCallData)
+        val callParams = mapOf("to" to multicallAddress, "data" to aggregateCallData)
         val hex = jsonRpcClient.callForHexResult(
             rpcUrl = rpcUrl,
             method = "eth_call",

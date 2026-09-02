@@ -523,6 +523,8 @@ interface RainClient {
     /**
      * Registers additional tokens with the SDK so their metadata (decimals / symbol) resolves
      * without an on-chain enrichment call. Retained across re-initialization; cleared by [reset].
+     * Re-registering a host-added address replaces its entry; built-in registry tokens are
+     * trusted and cannot be overridden.
      *
      * @param tokens Tokens to add to the SDK's token store.
      */

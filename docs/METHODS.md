@@ -613,14 +613,16 @@ call.
 ### registerTokens(tokens)
 
 Registers additional tokens so their metadata (decimals / symbol) resolves without an
-on-chain enrichment call. Retained across re-initialization; cleared by `reset()`.
+on-chain enrichment call. Retained across re-initialization; cleared by `reset()`. Built-in
+registry tokens are trusted and cannot be overridden: a registration naming one is ignored with a
+warning.
 
 - **Returns:** `Unit`
 - **Suspend:** No
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tokens` | `List<TokenInfo>` | Tokens to add to the SDK's token store. |
+| `tokens` | `List<TokenInfo>` | Tokens to add to the SDK's token store. Re-registering a host-added address replaces its entry; built-in registry tokens cannot be overridden. |
 
 ---
 
